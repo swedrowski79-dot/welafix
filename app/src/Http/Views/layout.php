@@ -21,7 +21,7 @@ declare(strict_types=1);
 </head>
 <body>
   <h1>Welafix Schnittstelle</h1>
-  <p class="badge">Status: läuft ✅</p>
+  <p class="badge">Status: läuft</p>
 
   <?php require $view; ?>
 

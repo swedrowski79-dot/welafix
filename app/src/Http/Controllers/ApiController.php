@@ -49,7 +49,7 @@ final class ApiController
 
     public function testSqlite(): void
     {
-        $path = __DIR__ . '/../../../database/app.db';
+        $path = getenv('SQLITE_PATH') ?: (__DIR__ . '/../../../storage/app.db');
 
         try {
             if (!file_exists($path)) {
@@ -59,8 +59,7 @@ final class ApiController
                 throw new RuntimeException('SQLite DB ist nicht lesbar.');
             }
 
-            $pdo = new PDO('sqlite:' . $path);
-            $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+            $pdo = $this->factory->sqlite();
             $pdo->query('SELECT 1');
 
             $this->jsonResponse([

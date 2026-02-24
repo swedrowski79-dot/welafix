@@ -10,7 +10,7 @@ $counts = $data['counts'];
     <button class="btn" type="button" data-endpoint="/api/test-mssql">MSSQL Test</button>
     <button class="btn" type="button" data-endpoint="/api/test-sqlite">SQLite Test</button>
   </div>
-  <pre id="api-output">Klicke einen Button, um eine API-Antwort zu sehen.</pre>
+  <pre id="out">Klicke einen Button, um eine API-Antwort zu sehen.</pre>
 </div>
 
 <div class="card">
@@ -51,7 +51,7 @@ $counts = $data['counts'];
 
 <script>
   (function () {
-    const output = document.getElementById('api-output');
+    const output = document.getElementById('out');
     const buttons = document.querySelectorAll('button[data-endpoint]');
     const setOutput = (value) => {
       output.textContent = value;
