@@ -8,6 +8,7 @@ use Welafix\Config\MappingLoader;
 use Welafix\Http\Controllers\DashboardController;
 use Welafix\Domain\Warengruppe\WarengruppeSyncService;
 use Welafix\Http\Controllers\ApiController;
+use Welafix\Domain\Artikel\ArtikelSyncService;
 
 final class App
 {
@@ -82,6 +83,26 @@ final class App
                 echo json_encode($stats);
             } catch (\Throwable $e) {
                 http_response_code(500);
+                $sql = null;
+                if (isset($service) && method_exists($service, 'getLastSql')) {
+                    $sql = $service->getLastSql();
+                }
+                echo json_encode([
+                    'error' => $e->getMessage(),
+                    'sql' => $sql ? $this->truncateSql($sql) : null,
+                ]);
+            }
+            return;
+        }
+
+        if ($path === '/sync/artikel') {
+            header('Content-Type: application/json');
+            try {
+                $service = new ArtikelSyncService($factory);
+                $stats = $service->runImport();
+                echo json_encode($stats);
+            } catch (\Throwable $e) {
+                http_response_code(500);
                 echo json_encode(['error' => $e->getMessage()]);
             }
             return;
@@ -89,5 +110,15 @@ final class App
 
         http_response_code(404);
         echo "404 Not Found";
+    }
+
+    private function truncateSql(string $sql): string
+    {
+        $max = 300;
+        $sql = trim(preg_replace('/\s+/', ' ', $sql) ?? $sql);
+        if (strlen($sql) <= $max) {
+            return $sql;
+        }
+        return substr($sql, 0, $max) . '...';
     }
 }

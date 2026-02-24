@@ -13,6 +13,7 @@ use Welafix\Database\ConnectionFactory;
 final class WarengruppeSyncService
 {
     private ConnectionFactory $factory;
+    private ?string $lastSql = null;
 
     public function __construct(ConnectionFactory $factory)
     {
@@ -35,7 +36,13 @@ final class WarengruppeSyncService
         $mssqlRepo = new WarengruppeRepositoryMssql($this->factory->mssql());
         $sqliteRepo = new WarengruppeRepositorySqlite($this->factory->sqlite());
 
-        $rows = $mssqlRepo->fetchAllByMapping($mapping);
+        try {
+            $rows = $mssqlRepo->fetchAllByMapping($mapping);
+            $this->lastSql = $mssqlRepo->getLastSql();
+        } catch (\Throwable $e) {
+            $this->lastSql = $mssqlRepo->getLastSql();
+            throw $e;
+        }
         $seenAt = (new DateTimeImmutable('now', new DateTimeZone('UTC')))->format(DATE_ATOM);
 
         $stats = [
@@ -65,6 +72,11 @@ final class WarengruppeSyncService
 
         $stats['paths_updated'] = $this->buildAndStorePaths($sqliteRepo, $this->factory->sqlite());
         return $stats;
+    }
+
+    public function getLastSql(): ?string
+    {
+        return $this->lastSql;
     }
 
     private function buildAndStorePaths(WarengruppeRepositorySqlite $repo, PDO $pdo): int

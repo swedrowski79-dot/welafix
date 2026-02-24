@@ -9,6 +9,7 @@ $counts = $data['counts'];
     <button class="btn" type="button" data-endpoint="/api/status">Status</button>
     <button class="btn" type="button" data-endpoint="/api/test-mssql">MSSQL Test</button>
     <button class="btn" type="button" data-endpoint="/api/test-sqlite">SQLite Test</button>
+    <button class="btn" type="button" data-endpoint="/sync/artikel">Artikel Sync</button>
   </div>
   <pre id="out">Klicke einen Button, um eine API-Antwort zu sehen.</pre>
 </div>

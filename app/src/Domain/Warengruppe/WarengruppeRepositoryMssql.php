@@ -9,6 +9,7 @@ use RuntimeException;
 final class WarengruppeRepositoryMssql
 {
     private PDO $pdo;
+    private ?string $lastSql = null;
 
     public function __construct(PDO $pdo)
     {
@@ -40,10 +41,35 @@ final class WarengruppeRepositoryMssql
             $where = '1=1';
         }
 
-        $columns = implode(', ', $select);
-        $sql = "SELECT {$columns} FROM {$table} WHERE {$where}";
+        $columns = implode(', ', array_map([$this, 'escapeIdentifier'], $select));
+        $tableEscaped = $this->escapeIdentifier($table);
+        $sql = "SELECT {$columns} FROM {$tableEscaped} WHERE {$where}";
+        $this->lastSql = $sql;
 
-        $stmt = $this->pdo->query($sql);
-        return $stmt->fetchAll(PDO::FETCH_ASSOC);
+        try {
+            $stmt = $this->pdo->query($sql);
+            return $stmt->fetchAll(PDO::FETCH_ASSOC);
+        } catch (\Throwable $e) {
+            throw new RuntimeException('MSSQL Query fehlgeschlagen: ' . $e->getMessage(), 0, $e);
+        }
+    }
+
+    public function getLastSql(): ?string
+    {
+        return $this->lastSql;
+    }
+
+    private function escapeIdentifier(string $identifier): string
+    {
+        $identifier = trim($identifier);
+        if ($identifier === '') {
+            return $identifier;
+        }
+        if (preg_match('/[\\s()]/', $identifier)) {
+            return $identifier;
+        }
+        $parts = explode('.', $identifier);
+        $escaped = array_map(static fn(string $part): string => '[' . $part . ']', $parts);
+        return implode('.', $escaped);
     }
 }
