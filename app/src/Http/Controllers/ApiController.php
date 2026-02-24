@@ -8,6 +8,7 @@ use DateTimeZone;
 use PDO;
 use RuntimeException;
 use Welafix\Database\ConnectionFactory;
+use Welafix\Domain\Artikel\ArtikelSyncService;
 
 final class ApiController
 {
@@ -74,6 +75,25 @@ final class ApiController
                 'error' => $e->getMessage(),
             ], 500);
         }
+    }
+
+    public function syncState(): void
+    {
+        $type = $_GET['type'] ?? 'artikel';
+        if ($type !== 'artikel') {
+            $this->jsonResponse([
+                'ok' => false,
+                'error' => 'Unbekannter Typ.',
+            ], 400);
+            return;
+        }
+
+        $service = new ArtikelSyncService($this->factory);
+        $state = $service->getState();
+        $this->jsonResponse([
+            'ok' => true,
+            'state' => $state,
+        ]);
     }
 
     private function jsonResponse(array $payload, int $status = 200): void

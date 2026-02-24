@@ -53,3 +53,50 @@ CREATE TABLE IF NOT EXISTS sync_runs (
   status TEXT,
   message TEXT
 );
+
+CREATE TABLE IF NOT EXISTS documents (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  source TEXT NOT NULL,
+  source_id TEXT NOT NULL,
+  doc_type TEXT NOT NULL,
+  doc_no TEXT,
+  doc_date TEXT,
+  customer_no TEXT,
+  total_gross REAL,
+  currency TEXT,
+  updated_at TEXT,
+  synced_at TEXT,
+  UNIQUE(source, source_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_documents_doc_no ON documents(doc_no);
+CREATE INDEX IF NOT EXISTS idx_documents_doc_date ON documents(doc_date);
+
+CREATE TABLE IF NOT EXISTS document_items (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  document_id INTEGER NOT NULL,
+  line_no INTEGER NOT NULL,
+  article_no TEXT,
+  title TEXT,
+  qty REAL,
+  unit_price REAL,
+  total REAL,
+  vat REAL,
+  FOREIGN KEY(document_id) REFERENCES documents(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_document_items_document_id ON document_items(document_id);
+CREATE INDEX IF NOT EXISTS idx_document_items_article_no ON document_items(article_no);
+
+CREATE TABLE IF NOT EXISTS document_files (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  document_id INTEGER NOT NULL,
+  file_name TEXT NOT NULL,
+  mime_type TEXT,
+  storage_path TEXT NOT NULL,
+  checksum TEXT,
+  created_at TEXT,
+  FOREIGN KEY(document_id) REFERENCES documents(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_document_files_document_id ON document_files(document_id);

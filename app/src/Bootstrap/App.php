@@ -65,6 +65,11 @@ final class App
             return;
         }
 
+        if ($path === '/api/sync-state') {
+            (new ApiController($factory))->syncState();
+            return;
+        }
+
         if ($path === '/api/test-mssql') {
             (new ApiController($factory))->testMssql();
             return;
@@ -104,11 +109,39 @@ final class App
             header('Content-Type: application/json');
             try {
                 $service = new ArtikelSyncService($factory);
-                $stats = $service->runImport();
+                $batch = isset($_GET['batch']) ? (int)$_GET['batch'] : 500;
+                $after = isset($_GET['after']) ? (string)$_GET['after'] : '';
+                $maxSeconds = isset($_GET['max_seconds']) ? (int)$_GET['max_seconds'] : 0;
+
+                $batch = max(1, min(1000, $batch));
+                $start = microtime(true);
+                $stats = $service->processBatch($after, $batch);
+
+                if ($maxSeconds > 0) {
+                    while (!$stats['done']) {
+                        if ((microtime(true) - $start) >= $maxSeconds) {
+                            break;
+                        }
+                        $stats = $service->processBatch($stats['last_key'], $batch);
+                    }
+                }
+
                 echo json_encode($stats);
             } catch (\Throwable $e) {
                 http_response_code(500);
-                echo json_encode(['error' => $e->getMessage()]);
+                $sql = null;
+                $params = null;
+                if (isset($service) && method_exists($service, 'getLastSql')) {
+                    $sql = $service->getLastSql();
+                }
+                if (isset($service) && method_exists($service, 'getLastParams')) {
+                    $params = $service->getLastParams();
+                }
+                echo json_encode([
+                    'error' => $e->getMessage(),
+                    'sql' => $sql ? $this->truncateSql($sql) : null,
+                    'params' => $params,
+                ]);
             }
             return;
         }
