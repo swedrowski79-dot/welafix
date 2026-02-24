@@ -13,8 +13,9 @@ services:
       - ./storage:/var/www/html/storage
       - ./logs:/var/www/html/logs
       # Optional: Host-Verzeichnisse für Bilder/Dokumente einbinden (anpassen)
-      # - /pfad/zu/bildern:/data/bilder:ro
-      # - /pfad/zu/dokumenten:/data/dokumente:ro
+      - C:\Welafix_old\AFS\Webshop\Photos:/var/www/pictures:ro
+      - C:\Welafix_old\AFS\Webshop\Dokumente:/var/www/documents:ro
+      - c:\Welafix_old\AFS\Webshop\data:/var/www/data:ro
     environment:
       APP_ENV: "local"
       TZ: "Europe/Berlin"
@@ -22,7 +23,7 @@ services:
       # MSSQL (AFS)
       MSSQL_HOST: "10.0.1.82"
       MSSQL_PORT: "1435"
-      MSSQL_DB: "AFS_WAWI_DB"
+      MSSQL_DB: "AFS_2018"
       MSSQL_USER: "sa"
       MSSQL_PASS: "W3laf!x"
       MSSQL_ENCRYPT: "false"

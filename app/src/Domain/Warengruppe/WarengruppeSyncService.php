@@ -14,6 +14,7 @@ final class WarengruppeSyncService
 {
     private ConnectionFactory $factory;
     private ?string $lastSql = null;
+    private ?array $lastContext = null;
 
     public function __construct(ConnectionFactory $factory)
     {
@@ -56,7 +57,7 @@ final class WarengruppeSyncService
 
         foreach ($rows as $row) {
             try {
-                $afsWgId = $this->requireStringField($row, 'Warengruppe');
+                $afsWgId = $this->requireIntField($row, 'Warengruppe');
                 $name = $this->requireStringField($row, 'Bezeichnung');
                 $parentId = $this->optionalParentId($row['Anhang'] ?? null);
 
@@ -79,13 +80,19 @@ final class WarengruppeSyncService
         return $this->lastSql;
     }
 
+    public function getLastContext(): ?array
+    {
+        return $this->lastContext;
+    }
+
     private function buildAndStorePaths(WarengruppeRepositorySqlite $repo, PDO $pdo): int
     {
         $items = $this->loadAllWarengruppen($pdo);
         $updated = 0;
         foreach ($items as $id => $item) {
-            [$path, $pathIds] = $this->buildPath($id, $items);
-            if ($repo->updatePath($id, $path, $pathIds)) {
+            $idInt = (int)$id;
+            [$path, $pathIds] = $this->buildPath($idInt, $items);
+            if ($repo->updatePath($idInt, $path, $pathIds)) {
                 $updated++;
             }
         }
@@ -101,7 +108,8 @@ final class WarengruppeSyncService
         $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
         $map = [];
         foreach ($rows as $row) {
-            $id = (string)$row['afs_wg_id'];
+            $id = (int)$row['afs_wg_id'];
+            $row['parent_id'] = $this->optionalParentId($row['parent_id'] ?? null);
             $map[$id] = $row;
         }
         return $map;
@@ -111,15 +119,16 @@ final class WarengruppeSyncService
      * @param array<string, array<string, mixed>> $items
      * @return array{0:string,1:string}
      */
-    private function buildPath(string $startId, array $items): array
+    private function buildPath(int $startId, array $items): array
     {
         $names = [];
         $ids = [];
         $seen = [];
         $current = $startId;
         $depth = 0;
+        $parent = null;
 
-        while ($current !== '') {
+        while ($current !== 0) {
             if ($depth >= 50) {
                 $this->log("Max-Tiefe erreicht bei Warengruppe {$startId}.");
                 break;
@@ -141,7 +150,6 @@ final class WarengruppeSyncService
             $ids[] = $current;
 
             $parent = $node['parent_id'] ?? null;
-            $parent = $this->optionalParentId($parent);
             if ($parent === null) {
                 break;
             }
@@ -155,12 +163,18 @@ final class WarengruppeSyncService
         $filteredNames = array_values(array_filter($names, static fn(string $value): bool => $value !== ''));
 
         $path = implode(' > ', $filteredNames);
-        $pathIds = implode('/', $ids);
+        $pathIds = implode('/', array_map(static fn(int $value): string => (string)$value, $ids));
+
+        $this->lastContext = [
+            'currentId' => $startId,
+            'parentId' => $parent,
+            'computedPath' => $path,
+        ];
 
         return [$path, $pathIds];
     }
 
-    private function optionalParentId($value): ?string
+    private function optionalParentId(int|string|null $value): ?int
     {
         if ($value === null) {
             return null;
@@ -169,7 +183,7 @@ final class WarengruppeSyncService
         if ($trimmed === '' || $trimmed === '0') {
             return null;
         }
-        return $trimmed;
+        return (int)$trimmed;
     }
 
     /**
@@ -185,6 +199,21 @@ final class WarengruppeSyncService
             throw new RuntimeException("Pflichtfeld leer: {$field}");
         }
         return $value;
+    }
+
+    /**
+     * @param array<string, mixed> $row
+     */
+    private function requireIntField(array $row, string $field): int
+    {
+        if (!array_key_exists($field, $row)) {
+            throw new RuntimeException("Pflichtfeld fehlt: {$field}");
+        }
+        $value = trim((string)$row[$field]);
+        if ($value === '') {
+            throw new RuntimeException("Pflichtfeld leer: {$field}");
+        }
+        return (int)$value;
     }
 
     private function log(string $message): void

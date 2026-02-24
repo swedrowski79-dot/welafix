@@ -20,9 +20,9 @@ CREATE INDEX IF NOT EXISTS idx_artikel_last_seen ON artikel(last_seen_at);
 
 CREATE TABLE IF NOT EXISTS warengruppe (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  afs_wg_id TEXT UNIQUE,
+  afs_wg_id INTEGER UNIQUE,
   name TEXT,
-  parent_id TEXT,
+  parent_id INTEGER,
   path TEXT,
   path_ids TEXT,
   last_seen_at TEXT,

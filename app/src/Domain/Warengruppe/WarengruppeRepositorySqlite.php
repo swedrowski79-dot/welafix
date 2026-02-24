@@ -17,10 +17,11 @@ final class WarengruppeRepositorySqlite
     /**
      * @return array<string, mixed>|null
      */
-    public function findById(string $afsWgId): ?array
+    public function findById(int $afsWgId): ?array
     {
         $stmt = $this->pdo->prepare('SELECT * FROM warengruppe WHERE afs_wg_id = :id LIMIT 1');
-        $stmt->execute([':id' => $afsWgId]);
+        $stmt->bindValue(':id', $afsWgId, PDO::PARAM_INT);
+        $stmt->execute();
         $row = $stmt->fetch(PDO::FETCH_ASSOC);
         return $row ?: null;
     }
@@ -28,7 +29,7 @@ final class WarengruppeRepositorySqlite
     /**
      * @return array{inserted:bool, updated:bool, unchanged:bool}
      */
-    public function upsert(string $afsWgId, string $name, ?string $parentId, string $seenAtIso): array
+    public function upsert(int $afsWgId, string $name, ?int $parentId, string $seenAtIso): array
     {
         $existing = $this->findById($afsWgId);
         $parentIdNormalized = $this->normalizeParentId($parentId);
@@ -38,14 +39,17 @@ final class WarengruppeRepositorySqlite
                 'INSERT INTO warengruppe (afs_wg_id, name, parent_id, last_seen_at, changed, change_reason)
                  VALUES (:id, :name, :parent_id, :last_seen_at, :changed, :change_reason)'
             );
-            $stmt->execute([
-                ':id' => $afsWgId,
-                ':name' => $name,
-                ':parent_id' => $parentIdNormalized,
-                ':last_seen_at' => $seenAtIso,
-                ':changed' => 1,
-                ':change_reason' => 'new',
-            ]);
+            $stmt->bindValue(':id', $afsWgId, PDO::PARAM_INT);
+            $stmt->bindValue(':name', $name, PDO::PARAM_STR);
+            if ($parentIdNormalized === null) {
+                $stmt->bindValue(':parent_id', null, PDO::PARAM_NULL);
+            } else {
+                $stmt->bindValue(':parent_id', $parentIdNormalized, PDO::PARAM_INT);
+            }
+            $stmt->bindValue(':last_seen_at', $seenAtIso, PDO::PARAM_STR);
+            $stmt->bindValue(':changed', 1, PDO::PARAM_INT);
+            $stmt->bindValue(':change_reason', 'new', PDO::PARAM_STR);
+            $stmt->execute();
             return ['inserted' => true, 'updated' => false, 'unchanged' => false];
         }
 
@@ -76,14 +80,21 @@ final class WarengruppeRepositorySqlite
                  change_reason = :change_reason
              WHERE afs_wg_id = :id'
         );
-        $stmt->execute([
-            ':id' => $afsWgId,
-            ':name' => $name,
-            ':parent_id' => $parentIdNormalized,
-            ':last_seen_at' => $seenAtIso,
-            ':changed' => $changed,
-            ':change_reason' => $changeReason !== '' ? $changeReason : null,
-        ]);
+        $stmt->bindValue(':id', $afsWgId, PDO::PARAM_INT);
+        $stmt->bindValue(':name', $name, PDO::PARAM_STR);
+        if ($parentIdNormalized === null) {
+            $stmt->bindValue(':parent_id', null, PDO::PARAM_NULL);
+        } else {
+            $stmt->bindValue(':parent_id', $parentIdNormalized, PDO::PARAM_INT);
+        }
+        $stmt->bindValue(':last_seen_at', $seenAtIso, PDO::PARAM_STR);
+        $stmt->bindValue(':changed', $changed, PDO::PARAM_INT);
+        if ($changeReason !== '') {
+            $stmt->bindValue(':change_reason', $changeReason, PDO::PARAM_STR);
+        } else {
+            $stmt->bindValue(':change_reason', null, PDO::PARAM_NULL);
+        }
+        $stmt->execute();
 
         if ($reasons !== []) {
             return ['inserted' => false, 'updated' => true, 'unchanged' => false];
@@ -92,7 +103,7 @@ final class WarengruppeRepositorySqlite
         return ['inserted' => false, 'updated' => false, 'unchanged' => true];
     }
 
-    public function updatePath(string $afsWgId, string $path, string $pathIds): bool
+    public function updatePath(int $afsWgId, string $path, string $pathIds): bool
     {
         $existing = $this->findById($afsWgId);
         if ($existing === null) {
@@ -121,25 +132,28 @@ final class WarengruppeRepositorySqlite
                  change_reason = :change_reason
              WHERE afs_wg_id = :id'
         );
-        $stmt->execute([
-            ':id' => $afsWgId,
-            ':path' => $path,
-            ':path_ids' => $pathIds,
-            ':change_reason' => $changeReason !== '' ? $changeReason : null,
-        ]);
+        $stmt->bindValue(':id', $afsWgId, PDO::PARAM_INT);
+        $stmt->bindValue(':path', $path, PDO::PARAM_STR);
+        $stmt->bindValue(':path_ids', $pathIds, PDO::PARAM_STR);
+        if ($changeReason !== '') {
+            $stmt->bindValue(':change_reason', $changeReason, PDO::PARAM_STR);
+        } else {
+            $stmt->bindValue(':change_reason', null, PDO::PARAM_NULL);
+        }
+        $stmt->execute();
         return true;
     }
 
-    private function normalizeParentId(?string $value): ?string
+    private function normalizeParentId(int|string|null $value): ?int
     {
         if ($value === null) {
             return null;
         }
-        $trimmed = trim($value);
+        $trimmed = trim((string)$value);
         if ($trimmed === '' || $trimmed === '0') {
             return null;
         }
-        return $trimmed;
+        return (int)$trimmed;
     }
 
     /**

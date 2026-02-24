@@ -84,12 +84,17 @@ final class App
             } catch (\Throwable $e) {
                 http_response_code(500);
                 $sql = null;
+                $context = null;
                 if (isset($service) && method_exists($service, 'getLastSql')) {
                     $sql = $service->getLastSql();
+                }
+                if (isset($service) && method_exists($service, 'getLastContext')) {
+                    $context = $service->getLastContext();
                 }
                 echo json_encode([
                     'error' => $e->getMessage(),
                     'sql' => $sql ? $this->truncateSql($sql) : null,
+                    'context' => $context,
                 ]);
             }
             return;
