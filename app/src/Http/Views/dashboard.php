@@ -4,6 +4,16 @@ declare(strict_types=1);
 $counts = $data['counts'];
 ?>
 <div class="card">
+  <h2>Welafix Dashboard</h2>
+  <div class="btn-row">
+    <button class="btn" type="button" data-endpoint="/api/status">Status</button>
+    <button class="btn" type="button" data-endpoint="/api/test-mssql">MSSQL Test</button>
+    <button class="btn" type="button" data-endpoint="/api/test-sqlite">SQLite Test</button>
+  </div>
+  <pre id="api-output">Klicke einen Button, um eine API-Antwort zu sehen.</pre>
+</div>
+
+<div class="card">
   <h2>Übersicht</h2>
   <div class="grid">
     <div class="card">
@@ -38,3 +48,32 @@ $counts = $data['counts'];
   <h2>Konfiguration</h2>
   <p>Mappings liegen unter <code>app/src/Config/mappings/</code>.</p>
 </div>
+
+<script>
+  (function () {
+    const output = document.getElementById('api-output');
+    const buttons = document.querySelectorAll('button[data-endpoint]');
+    const setOutput = (value) => {
+      output.textContent = value;
+    };
+
+    buttons.forEach((button) => {
+      button.addEventListener('click', async () => {
+        const endpoint = button.getAttribute('data-endpoint');
+        setOutput('Lade ' + endpoint + ' ...');
+        try {
+          const response = await fetch(endpoint, { headers: { 'Accept': 'application/json' } });
+          const text = await response.text();
+          try {
+            const json = JSON.parse(text);
+            setOutput(JSON.stringify(json, null, 2));
+          } catch (e) {
+            setOutput(text);
+          }
+        } catch (e) {
+          setOutput('Fehler: ' + e.message);
+        }
+      });
+    });
+  })();
+</script>

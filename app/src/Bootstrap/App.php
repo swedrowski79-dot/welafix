@@ -7,6 +7,7 @@ use Welafix\Database\ConnectionFactory;
 use Welafix\Config\MappingLoader;
 use Welafix\Http\Controllers\DashboardController;
 use Welafix\Domain\Warengruppe\WarengruppeSyncService;
+use Welafix\Http\Controllers\ApiController;
 
 final class App
 {
@@ -55,6 +56,21 @@ final class App
             }
 
             echo json_encode($output);
+            return;
+        }
+
+        if ($path === '/api/status') {
+            (new ApiController($factory))->status();
+            return;
+        }
+
+        if ($path === '/api/test-mssql') {
+            (new ApiController($factory))->testMssql();
+            return;
+        }
+
+        if ($path === '/api/test-sqlite') {
+            (new ApiController($factory))->testSqlite();
             return;
         }
 
