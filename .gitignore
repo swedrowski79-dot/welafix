@@ -1,0 +1,4 @@
+/storage/app.db
+/logs/*.log
+/vendor/
+.DS_Store

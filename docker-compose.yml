@@ -1,0 +1,38 @@
+version: "3.9"
+
+services:
+  welafix-schnittstelle:
+    build:
+      context: .
+      dockerfile: docker/php/Dockerfile
+    container_name: welafix-schnittstelle
+    ports:
+      - "8088:80"
+    volumes:
+      - ./app:/var/www/html
+      - ./storage:/var/www/html/storage
+      - ./logs:/var/www/html/logs
+      # Optional: Host-Verzeichnisse für Bilder/Dokumente einbinden (anpassen)
+      # - /pfad/zu/bildern:/data/bilder:ro
+      # - /pfad/zu/dokumenten:/data/dokumente:ro
+    environment:
+      APP_ENV: "local"
+      TZ: "Europe/Berlin"
+
+      # MSSQL (AFS)
+      MSSQL_HOST: "10.0.1.82"
+      MSSQL_PORT: "1435"
+      MSSQL_DB: "AFS_WAWI_DB"
+      MSSQL_USER: "sa"
+      MSSQL_PASS: "W3laf!x"
+      MSSQL_ENCRYPT: "false"
+      MSSQL_TRUST_CERT: "true"
+
+      # SQLite
+      SQLITE_PATH: "/var/www/html/storage/app.db"
+
+      # XT-API (Shop)
+      XT_API_BASE: "http://host.docker.internal/xt-api"
+      XT_API_KEY: "CHANGE_ME"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
