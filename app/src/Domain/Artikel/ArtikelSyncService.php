@@ -136,6 +136,9 @@ final class ArtikelSyncService
                             $wgSeo = (string)$wgSeoMap[$warengruppeId];
                         }
                         if ($wgSeo === '') {
+                            if ($warengruppeId !== null) {
+                                $this->logMissingWarengruppeOnce($warengruppeId, $artikelnummer);
+                            }
                             $wgSeo = 'de';
                         }
                         $extras['seo_url'] = rtrim($wgSeo, '/') . ($artikelSlug !== '' ? '/' . $artikelSlug : '');
@@ -253,6 +256,21 @@ final class ArtikelSyncService
         $line = "[{$timestamp}] {$message}\n";
         $path = __DIR__ . '/../../../logs/app.log';
         @file_put_contents($path, $line, FILE_APPEND);
+    }
+
+    private function logMissingWarengruppeOnce(int $warengruppeId, string $artikelnummer): void
+    {
+        if (!is_dev_env()) {
+            return;
+        }
+
+        static $logged = false;
+        if ($logged) {
+            return;
+        }
+        $logged = true;
+
+        $this->log("missing wg mapping: warengruppe_id={$warengruppeId} artikelnummer={$artikelnummer}");
     }
 
     private function ensureStateTable(\PDO $pdo): void
