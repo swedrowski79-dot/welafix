@@ -6,11 +6,11 @@ namespace Welafix\Domain\Artikel;
 use DateTimeImmutable;
 use DateTimeZone;
 use RuntimeException;
-use Welafix\Config\MappingLoader;
+use Welafix\Config\MappingService;
 use Welafix\Database\ConnectionFactory;
 use Welafix\Database\Db;
 use Welafix\Database\SchemaSyncService;
-use Welafix\Database\SchemaHelper;
+use Welafix\Infrastructure\Sqlite\SqliteSchemaHelper;
 
 final class ArtikelSyncService
 {
@@ -20,11 +20,13 @@ final class ArtikelSyncService
     private array $lastParams = [];
     private const STATE_TYPE = 'artikel';
     private SchemaSyncService $schemaSync;
+    private SqliteSchemaHelper $schemaHelper;
 
     public function __construct(ConnectionFactory $factory)
     {
         $this->factory = $factory;
         $this->schemaSync = new SchemaSyncService();
+        $this->schemaHelper = new SqliteSchemaHelper();
     }
 
     /**
@@ -76,17 +78,22 @@ final class ArtikelSyncService
             $existingColumns = $this->loadExistingColumns($pdo, 'artikel');
             $preparedRows = [];
             $newColumns = [];
+            $allowedLookup = array_flip($selectFields);
 
             $desiredColumns = $this->buildDesiredColumns($selectFields);
             foreach ($desiredColumns as $column => $type) {
-                if (!$this->columnExists($existingColumns, $column)) {
+                if (!isset($existingColumns[strtolower($column)])) {
                     $newColumns[$column] = $type;
                 }
             }
 
-            $extraKeys = $this->getRawFieldNames($selectFields);
+            $extraKeys = array_values(array_unique(array_merge($this->getRawFieldNames($selectFields), ['seo_url'])));
+            sort($extraKeys, SORT_STRING);
+
+            $wgSeoMap = $this->loadWarengruppeSeoMap($pdo);
 
             foreach ($rows as $row) {
+                $row = array_intersect_key($row, $allowedLookup);
                 $afsArtikelId = isset($row[$keyField]) ? (string)$row[$keyField] : '';
                 if ($afsArtikelId === '') {
                     $preparedRows[] = ['error' => 'missing_key', 'row' => $row];
@@ -100,7 +107,7 @@ final class ArtikelSyncService
 
             if ($newColumns !== []) {
                 foreach ($newColumns as $column => $type) {
-                    if (!SchemaHelper::columnExists($pdo, 'artikel', $column)) {
+                    if (!$this->schemaHelper->columnExists($pdo, 'artikel', $column)) {
                         $pdo->exec('ALTER TABLE artikel ADD COLUMN ' . $this->quoteIdentifier($column) . ' ' . $type);
                         $existingColumns[strtolower($column)] = $column;
                     }
@@ -122,6 +129,16 @@ final class ArtikelSyncService
                         $warengruppeId = $this->optionalIntField($row['Warengruppe'] ?? null);
 
                         $extras = $this->fillMissingExtras($prepared['extras'], $extraKeys);
+
+                        $artikelSlug = strtolower(xt_filterAutoUrlText_inline($name, 'de'));
+                        $wgSeo = '';
+                        if ($warengruppeId !== null && isset($wgSeoMap[$warengruppeId])) {
+                            $wgSeo = (string)$wgSeoMap[$warengruppeId];
+                        }
+                        if ($wgSeo === '') {
+                            $wgSeo = 'de';
+                        }
+                        $extras['seo_url'] = rtrim($wgSeo, '/') . ($artikelSlug !== '' ? '/' . $artikelSlug : '');
 
                         $data = [
                             'afs_artikel_id' => $afsArtikelId,
@@ -362,12 +379,12 @@ final class ArtikelSyncService
 
     private function loadArtikelMapping(): array
     {
-        $loader = new MappingLoader();
-        $mappings = $loader->loadAll();
-        if (!isset($mappings['artikel'])) {
+        $mappingLoader = new \Welafix\Config\MappingLoader();
+        $all = $mappingLoader->loadAll();
+        if (!isset($all['artikel'])) {
             throw new RuntimeException('Mapping "artikel" nicht gefunden.');
         }
-        return $mappings['artikel'];
+        return $all['artikel'];
     }
 
     /**
@@ -376,9 +393,8 @@ final class ArtikelSyncService
      */
     private function getSelectFields(array $mapping): array
     {
-        $loader = new MappingLoader();
-        $allowed = $loader->getAllowedColumns('artikel');
-        return $allowed;
+        $mapping = new MappingService();
+        return $mapping->getAllowedColumns('artikel');
     }
 
     /**
@@ -398,6 +414,7 @@ final class ArtikelSyncService
             'online' => 'INTEGER',
             'last_seen_at' => 'TEXT',
             'row_hash' => 'TEXT',
+            'seo_url' => 'TEXT',
         ];
 
         $numericInt = ['Artikel', 'Art', 'Bestand', 'Warengruppe', 'Zusatzfeld01'];
@@ -429,14 +446,6 @@ final class ArtikelSyncService
             'Bestand' => 'stock',
             'Internet' => 'online',
         ];
-    }
-
-    /**
-     * @param array<string, string> $existingColumns
-     */
-    private function columnExists(array $existingColumns, string $column): bool
-    {
-        return isset($existingColumns[strtolower($column)]);
     }
 
     /**
@@ -514,6 +523,23 @@ final class ArtikelSyncService
             $json = '';
         }
         return sha1($json);
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    private function loadWarengruppeSeoMap(\PDO $pdo): array
+    {
+        $stmt = $pdo->query('SELECT afs_wg_id, seo_url FROM warengruppe');
+        $rows = $stmt->fetchAll(\PDO::FETCH_ASSOC) ?: [];
+        $map = [];
+        foreach ($rows as $row) {
+            $id = (int)($row['afs_wg_id'] ?? 0);
+            if ($id !== 0) {
+                $map[$id] = (string)($row['seo_url'] ?? '');
+            }
+        }
+        return $map;
     }
 
     /**

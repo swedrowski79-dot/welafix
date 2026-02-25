@@ -5,7 +5,7 @@ namespace Welafix\Domain\Warengruppe;
 
 use PDO;
 use RuntimeException;
-use Welafix\Config\MappingLoader;
+use Welafix\Config\MappingService;
 
 final class WarengruppeRepositoryMssql
 {
@@ -42,9 +42,9 @@ final class WarengruppeRepositoryMssql
             $where = '1=1';
         }
 
-        $loader = new MappingLoader();
+        $mappingService = new MappingService();
         $select = array_values(array_filter($select, static fn($value): bool => is_string($value) && $value !== ''));
-        $columns = $loader->buildSelectList($select, 'w');
+        $columns = $mappingService->buildMssqlSelectList($select, 'w');
         $tableEscaped = $this->escapeIdentifier($table);
         $sql = "SELECT {$columns} FROM {$tableEscaped} w WHERE {$where}";
         $this->lastSql = $sql;

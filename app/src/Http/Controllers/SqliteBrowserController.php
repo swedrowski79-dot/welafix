@@ -4,7 +4,7 @@ declare(strict_types=1);
 namespace Welafix\Http\Controllers;
 
 use PDO;
-use Welafix\Config\MappingLoader;
+use Welafix\Config\MappingService;
 use Welafix\Database\ConnectionFactory;
 
 final class SqliteBrowserController
@@ -58,8 +58,8 @@ final class SqliteBrowserController
             }
 
             if ($name === 'artikel' || $name === 'warengruppe') {
-                $mappingLoader = new MappingLoader();
-                $allowed = $mappingLoader->getAllowedColumns($name === 'artikel' ? 'artikel' : 'warengruppe');
+                $mapping = new MappingService();
+                $allowed = $mapping->getAllowedColumns($name === 'artikel' ? 'artikel' : 'warengruppe');
                 $allowedLookup = [];
                 foreach ($allowed as $col) {
                     $allowedLookup[strtolower($col)] = true;

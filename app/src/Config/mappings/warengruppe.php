@@ -24,7 +24,7 @@ return [
     'Bild',
     'Bild_gross',
     'Beschreibung',
-    'Update',
+    
   ],
 
   // Hinweis aus YAML: on_update_column = Update

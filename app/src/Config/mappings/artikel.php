@@ -60,7 +60,7 @@ return [
     'Werbetext1',
     'Bemerkung',
     'Hinweis',
-    'Update',
+    
   ],
 
   // Optional: nur als Doku/Hint (dein Importer kann das später nutzen)

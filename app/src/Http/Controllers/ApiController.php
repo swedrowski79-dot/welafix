@@ -7,7 +7,7 @@ use DateTimeImmutable;
 use DateTimeZone;
 use PDO;
 use RuntimeException;
-use Welafix\Config\MappingLoader;
+use Welafix\Config\MappingService;
 use Welafix\Database\ConnectionFactory;
 use Welafix\Database\Db;
 use Welafix\Domain\Artikel\ArtikelSyncService;
@@ -199,8 +199,11 @@ final class ApiController
         $offset = max(0, $offset);
 
         try {
-            $loader = new MappingLoader();
-            $allowed = $loader->getAllowedColumns('artikel');
+            $mapping = new MappingService();
+            $allowed = array_values(array_unique(array_merge(
+                $mapping->getAllowedColumns('artikel'),
+                ['seo_url']
+            )));
             $pdo = $this->factory->sqlite();
             $selectList = implode(', ', array_map([$this, 'quoteIdentifier'], $allowed));
             $sql = 'SELECT ' . $selectList . ' FROM artikel LIMIT :limit OFFSET :offset';
@@ -209,7 +212,7 @@ final class ApiController
             $stmt->bindValue(':offset', $offset, PDO::PARAM_INT);
             $stmt->execute();
             $rows = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
-            $rows = $loader->filterRows($rows, $allowed);
+            $rows = $mapping->filterRows($rows, $allowed);
             $this->jsonResponse([
                 'ok' => true,
                 'items' => $rows,
@@ -232,8 +235,11 @@ final class ApiController
         $offset = max(0, $offset);
 
         try {
-            $loader = new MappingLoader();
-            $allowed = $loader->getAllowedColumns('warengruppe');
+            $mapping = new MappingService();
+            $allowed = array_values(array_unique(array_merge(
+                $mapping->getAllowedColumns('warengruppe'),
+                ['seo_url']
+            )));
             $pdo = $this->factory->sqlite();
             $selectList = implode(', ', array_map([$this, 'quoteIdentifier'], $allowed));
             $sql = 'SELECT ' . $selectList . ' FROM warengruppe LIMIT :limit OFFSET :offset';
@@ -242,7 +248,7 @@ final class ApiController
             $stmt->bindValue(':offset', $offset, PDO::PARAM_INT);
             $stmt->execute();
             $rows = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
-            $rows = $loader->filterRows($rows, $allowed);
+            $rows = $mapping->filterRows($rows, $allowed);
             $this->jsonResponse([
                 'ok' => true,
                 'items' => $rows,

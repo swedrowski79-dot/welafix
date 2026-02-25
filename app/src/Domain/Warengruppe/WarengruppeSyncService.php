@@ -7,11 +7,11 @@ use DateTimeImmutable;
 use DateTimeZone;
 use PDO;
 use RuntimeException;
-use Welafix\Config\MappingLoader;
+use Welafix\Config\MappingService;
 use Welafix\Database\ConnectionFactory;
 use Welafix\Database\Db;
 use Welafix\Database\SchemaSyncService;
-use Welafix\Database\SchemaHelper;
+use Welafix\Infrastructure\Sqlite\SqliteSchemaHelper;
 
 final class WarengruppeSyncService
 {
@@ -19,11 +19,13 @@ final class WarengruppeSyncService
     private ?string $lastSql = null;
     private ?array $lastContext = null;
     private SchemaSyncService $schemaSync;
+    private SqliteSchemaHelper $schemaHelper;
 
     public function __construct(ConnectionFactory $factory)
     {
         $this->factory = $factory;
         $this->schemaSync = new SchemaSyncService();
+        $this->schemaHelper = new SqliteSchemaHelper();
     }
 
     /**
@@ -31,8 +33,8 @@ final class WarengruppeSyncService
      */
     public function runImportAndBuildPaths(): array
     {
-        $loader = new MappingLoader();
-        $mappings = $loader->loadAll();
+        $mappingLoader = new \Welafix\Config\MappingLoader();
+        $mappings = $mappingLoader->loadAll();
         if (!isset($mappings['warengruppe'])) {
             throw new RuntimeException('Mapping "warengruppe" nicht gefunden.');
         }
@@ -69,8 +71,10 @@ final class WarengruppeSyncService
         $existingColumns = $this->loadExistingColumns($pdo, 'warengruppe');
         $preparedRows = [];
         $newColumns = [];
+        $allowedLookup = array_flip($selectFields);
 
         foreach ($rows as $row) {
+            $row = array_intersect_key($row, $allowedLookup);
             $afsWgId = isset($row['Warengruppe']) ? (string)$row['Warengruppe'] : '';
             if ($afsWgId === '') {
                 $preparedRows[] = ['error' => 'missing_key', 'row' => $row];
@@ -83,14 +87,14 @@ final class WarengruppeSyncService
         }
 
         foreach ($this->buildDesiredColumns($selectFields) as $column => $type) {
-            if (!$this->columnExists($existingColumns, $column)) {
+            if (!isset($existingColumns[strtolower($column)])) {
                 $newColumns[$column] = $type;
             }
         }
 
         if ($newColumns !== []) {
             foreach ($newColumns as $column => $type) {
-                if (!SchemaHelper::columnExists($pdo, 'warengruppe', $column)) {
+                if (!$this->schemaHelper->columnExists($pdo, 'warengruppe', $column)) {
                     $pdo->exec('ALTER TABLE warengruppe ADD COLUMN ' . $this->quoteIdentifier($column) . ' ' . $type);
                     $existingColumns[strtolower($column)] = $column;
                 }
@@ -127,7 +131,7 @@ final class WarengruppeSyncService
             throw $e;
         }
 
-        $stats['paths_updated'] = $this->buildAndStorePaths($sqliteRepo, $this->factory->sqlite());
+        $stats['paths_updated'] = $this->buildAndStorePathsAndSeo($this->factory->sqlite());
         return $stats;
     }
 
@@ -141,18 +145,78 @@ final class WarengruppeSyncService
         return $this->lastContext;
     }
 
-    private function buildAndStorePaths(WarengruppeRepositorySqlite $repo, PDO $pdo): int
+    private function buildAndStorePathsAndSeo(PDO $pdo): int
     {
         $items = $this->loadAllWarengruppen($pdo);
         $updated = 0;
+        $seoCache = [];
+        $seoBuilding = [];
+
+        $computeSeo = function (int $id) use (&$computeSeo, &$items, &$seoCache, &$seoBuilding): string {
+            if (isset($seoCache[$id])) {
+                return $seoCache[$id];
+            }
+            if (isset($seoBuilding[$id])) {
+                return 'de';
+            }
+            $seoBuilding[$id] = true;
+            $name = (string)($items[$id]['name'] ?? '');
+            $slug = strtolower(xt_filterAutoUrlText_inline($name, 'de'));
+            $parent = $items[$id]['parent_id'] ?? null;
+
+            if ($parent === null || !isset($items[$parent])) {
+                $seo = 'de' . ($slug !== '' ? '/' . $slug : '');
+            } else {
+                $parentSeo = $computeSeo($parent);
+                $seo = rtrim($parentSeo, '/') . ($slug !== '' ? '/' . $slug : '');
+            }
+
+            $seoCache[$id] = $seo;
+            unset($seoBuilding[$id]);
+            return $seo;
+        };
+
         $pdo->beginTransaction();
         try {
             foreach ($items as $id => $item) {
                 $idInt = (int)$id;
                 [$path, $pathIds] = $this->buildPath($idInt, $items);
-                if ($repo->updatePath($idInt, $path, $pathIds)) {
-                    $updated++;
+                $seoUrl = $computeSeo($idInt);
+                $pathChanged = (string)($item['path'] ?? '') !== $path;
+                $pathIdsChanged = (string)($item['path_ids'] ?? '') !== $pathIds;
+                $seoChanged = (string)($item['seo_url'] ?? '') !== $seoUrl;
+
+                if (!$pathChanged && !$pathIdsChanged && !$seoChanged) {
+                    continue;
                 }
+
+                $reasons = [];
+                if ($pathChanged || $pathIdsChanged) {
+                    $reasons[] = 'path';
+                }
+                if ($seoChanged) {
+                    $reasons[] = 'seo_url';
+                }
+
+                $changeReason = $this->mergeReasons((string)($item['change_reason'] ?? ''), $reasons);
+
+                $stmt = $pdo->prepare(
+                    'UPDATE warengruppe
+                     SET path = :path,
+                         path_ids = :path_ids,
+                         seo_url = :seo_url,
+                         changed = 1,
+                         change_reason = :change_reason
+                     WHERE afs_wg_id = :id'
+                );
+                $stmt->execute([
+                    ':path' => $path,
+                    ':path_ids' => $pathIds,
+                    ':seo_url' => $seoUrl,
+                    ':change_reason' => $changeReason,
+                    ':id' => $idInt,
+                ]);
+                $updated++;
             }
             $pdo->commit();
         } catch (\Throwable $e) {
@@ -167,7 +231,7 @@ final class WarengruppeSyncService
      */
     private function loadAllWarengruppen(PDO $pdo): array
     {
-        $stmt = $pdo->query('SELECT afs_wg_id, name, parent_id, path, path_ids FROM warengruppe');
+        $stmt = $pdo->query('SELECT afs_wg_id, name, parent_id, path, path_ids, seo_url, change_reason FROM warengruppe');
         $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
         $map = [];
         foreach ($rows as $row) {
@@ -297,19 +361,14 @@ final class WarengruppeSyncService
         return $columns;
     }
 
-    private function quoteIdentifier(string $name): string
-    {
-        return '"' . str_replace('"', '""', $name) . '"';
-    }
-
     /**
      * @param array<string, mixed> $mapping
      * @return array<int, string>
      */
     private function getSelectFields(array $mapping): array
     {
-        $loader = new MappingLoader();
-        return $loader->getAllowedColumns('warengruppe');
+        $mapping = new MappingService();
+        return $mapping->getAllowedColumns('warengruppe');
     }
 
     /**
@@ -361,6 +420,7 @@ final class WarengruppeSyncService
             'parent_id' => 'INTEGER',
             'path' => 'TEXT',
             'path_ids' => 'TEXT',
+            'seo_url' => 'TEXT',
             'last_seen_at' => 'TEXT',
             'changed' => 'INTEGER',
             'change_reason' => 'TEXT',
@@ -372,6 +432,31 @@ final class WarengruppeSyncService
             }
         }
         return $columns;
+    }
+
+    /**
+     * @param string[] $reasons
+     */
+    private function mergeReasons(string $existing, array $reasons): string
+    {
+        $items = [];
+        if ($existing !== '') {
+            foreach (explode(',', $existing) as $item) {
+                $item = trim($item);
+                if ($item !== '') {
+                    $items[$item] = true;
+                }
+            }
+        }
+        foreach ($reasons as $reason) {
+            $items[$reason] = true;
+        }
+        return implode(',', array_keys($items));
+    }
+
+    private function quoteIdentifier(string $name): string
+    {
+        return '"' . str_replace('"', '""', $name) . '"';
     }
 
     private function log(string $message): void

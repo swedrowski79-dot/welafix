@@ -5,7 +5,7 @@ namespace Welafix\Domain\Export;
 
 use PDO;
 use RuntimeException;
-use Welafix\Config\MappingLoader;
+use Welafix\Config\MappingService;
 use Welafix\Database\Db;
 use Welafix\Logger\TemplateVarLogger;
 use Welafix\Template\PlaceholderRenderer;
@@ -34,8 +34,8 @@ final class TemplateExportService
             return;
         }
 
-        $mappingLoader = new MappingLoader();
-        $allowed = $mappingLoader->getAllowedColumns('artikel');
+        $mappingService = new MappingService();
+        $allowed = $mappingService->getAllowedColumns('artikel');
         $desired = array_values(array_unique(array_merge($allowed, [
             'afs_artikel_id',
             'artikelnummer',

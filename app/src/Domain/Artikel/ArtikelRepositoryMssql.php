@@ -5,7 +5,7 @@ namespace Welafix\Domain\Artikel;
 
 use PDO;
 use RuntimeException;
-use Welafix\Config\MappingLoader;
+use Welafix\Config\MappingService;
 
 final class ArtikelRepositoryMssql
 {
@@ -35,22 +35,22 @@ final class ArtikelRepositoryMssql
         $key = $source['key'] ?? 'Artikel';
         $select = $mapping['select'] ?? [];
 
-        $loader = new MappingLoader();
+        $mappingService = new MappingService();
         $select = array_values(array_filter($select, static fn($value): bool => is_string($value) && $value !== ''));
         $select = $this->ensureKeySelected($select, $key);
-        $selectSql = $loader->buildSelectList($select, 'a');
+        $selectSql = $mappingService->buildMssqlSelectList($select, 'a');
 
         $whereParts = [];
         if (trim($where) !== '') {
             $whereParts[] = '(' . $where . ')';
         }
-        $whereParts[] = '(? = \'\' OR a.' . $key . ' > ?)';
+        $whereParts[] = '(? = \'\' OR a.' . $mappingService->escapeMssqlIdentifier($key) . ' > ?)';
         $whereSql = implode(' AND ', $whereParts);
 
         $sql = "SELECT TOP {$limit} {$selectSql}
           FROM {$table} a
           WHERE {$whereSql}
-          ORDER BY a.{$key} ASC";
+          ORDER BY a." . $mappingService->escapeMssqlIdentifier($key) . " ASC";
 
         $this->lastSql = $sql;
         $this->lastParams = [$afterKey, $afterKey];
