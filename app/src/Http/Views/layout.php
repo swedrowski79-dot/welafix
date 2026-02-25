@@ -26,6 +26,8 @@ declare(strict_types=1);
     header h1 { margin: 0; font-size: 22px; }
     .badge { display:inline-block; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--border); background: #fff; color: var(--muted); font-size: 12px; }
     .card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 16px; margin-bottom: 16px; box-shadow: 0 1px 1px rgba(16,24,40,0.04); }
+    .card.flex { display: flex; flex-direction: column; }
+    .card.full-height { height: calc(100vh - 260px); }
     .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
     .tile { border: 1px solid var(--border); border-radius: 12px; padding: 14px; background: #fafbff; }
     .tile-label { font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin-bottom: 8px; }
@@ -44,11 +46,13 @@ declare(strict_types=1);
     code { background: #eef2ff; padding: 2px 6px; border-radius: 6px; }
     .log { background: #0b1020; color: #d1d5db; padding: 14px; border-radius: 10px; overflow: auto; min-height: 140px; }
     .error { color: var(--fail); }
-    .table-wrap { overflow: auto; border: 1px solid var(--border); border-radius: 10px; }
+    .table-wrap { border: 1px solid var(--border); border-radius: 10px; }
+    .table-scroll { overflow: auto; flex: 1; }
     table { width: 100%; border-collapse: collapse; font-size: 14px; }
     th, td { padding: 8px 10px; border-bottom: 1px solid var(--border); text-align: left; white-space: nowrap; }
     th { background: #f8fafc; position: sticky; top: 0; z-index: 1; }
     .pagination { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
+    .paginator-bar { position: sticky; bottom: 0; background: var(--card); padding-top: 10px; }
     .muted { color: var(--muted); }
   </style>
 </head>

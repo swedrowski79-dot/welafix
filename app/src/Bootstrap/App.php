@@ -12,6 +12,7 @@ use Welafix\Domain\Warengruppe\WarengruppeSyncService;
 use Welafix\Http\Controllers\ApiController;
 use Welafix\Domain\Artikel\ArtikelSyncService;
 use Welafix\Domain\Media\MediaImporter;
+use Welafix\Domain\Export\TemplateExportService;
 
 final class App
 {
@@ -124,6 +125,11 @@ final class App
             try {
                 $service = new WarengruppeSyncService($factory);
                 $stats = $service->runImportAndBuildPaths();
+                try {
+                    (new TemplateExportService())->exportWarengruppeTemplates();
+                } catch (\Throwable $e) {
+                    $stats['template_export_error'] = $e->getMessage();
+                }
                 echo json_encode($stats);
             } catch (\Throwable $e) {
                 http_response_code(500);
@@ -165,6 +171,11 @@ final class App
                     }
                 }
 
+                try {
+                    (new TemplateExportService())->exportArtikelTemplates();
+                } catch (\Throwable $e) {
+                    $stats['template_export_error'] = $e->getMessage();
+                }
                 echo json_encode($stats);
             } catch (\Throwable $e) {
                 http_response_code(500);

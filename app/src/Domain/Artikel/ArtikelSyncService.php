@@ -9,6 +9,7 @@ use RuntimeException;
 use Welafix\Config\MappingLoader;
 use Welafix\Database\ConnectionFactory;
 use Welafix\Database\Db;
+use Welafix\Database\SchemaSyncService;
 use Welafix\Domain\FileDb\FileDbCache;
 
 final class ArtikelSyncService
@@ -19,6 +20,7 @@ final class ArtikelSyncService
     private array $lastParams = [];
     private const STATE_TYPE = 'artikel';
     private FileDbCache $fileDbCache;
+    private SchemaSyncService $schemaSync;
     private const BASE_COLUMNS = [
         'afs_artikel_id',
         'afs_key',
@@ -39,6 +41,7 @@ final class ArtikelSyncService
     {
         $this->factory = $factory;
         $this->fileDbCache = new FileDbCache();
+        $this->schemaSync = new SchemaSyncService();
     }
 
     /**
@@ -53,9 +56,11 @@ final class ArtikelSyncService
             $this->resetState($pdo);
         }
 
-        $mssqlRepo = new ArtikelRepositoryMssql(Db::guardMssql(Db::mssql(), __METHOD__));
+        $mssql = Db::guardMssql(Db::mssql(), __METHOD__);
+        $mssqlRepo = new ArtikelRepositoryMssql($mssql);
         $sqliteRepo = new ArtikelRepositorySqlite($pdo);
         $sqliteRepo->ensureTable();
+        $this->schemaSync->ensureSqliteColumnsMatchMssql($mssql, $pdo, 'dbo.Artikel', 'artikel');
 
         $batchSize = max(1, min(1000, $batchSize));
         $seenAt = (new DateTimeImmutable('now', new DateTimeZone('UTC')))->format(DATE_ATOM);

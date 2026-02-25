@@ -60,10 +60,10 @@ final class SqliteBrowserController
 
             $q = isset($_GET['q']) ? trim((string)$_GET['q']) : '';
             $page = isset($_GET['page']) ? (int)$_GET['page'] : 1;
-            $pageSize = isset($_GET['pageSize']) ? (int)$_GET['pageSize'] : 50;
+            $perPage = isset($_GET['per_page']) ? (int)$_GET['per_page'] : 50;
             $page = max(1, $page);
-            $pageSize = max(1, min(200, $pageSize));
-            $offset = ($page - 1) * $pageSize;
+            $perPage = max(1, min(200, $perPage));
+            $offset = ($page - 1) * $perPage;
 
             $search = $this->buildSearch($columns, $textColumns, $q);
             $whereSql = $search['where'];
@@ -90,7 +90,7 @@ final class SqliteBrowserController
             foreach ($params as $key => $value) {
                 $stmt->bindValue($key, $value, PDO::PARAM_STR);
             }
-            $stmt->bindValue(':limit', $pageSize, PDO::PARAM_INT);
+            $stmt->bindValue(':limit', $perPage, PDO::PARAM_INT);
             $stmt->bindValue(':offset', $offset, PDO::PARAM_INT);
             $stmt->execute();
             $rows = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
@@ -100,7 +100,7 @@ final class SqliteBrowserController
                 'columns' => $columns,
                 'rows' => $rows,
                 'page' => $page,
-                'pageSize' => $pageSize,
+                'per_page' => $perPage,
                 'totalRows' => $totalRows,
                 'query' => $q,
             ]);

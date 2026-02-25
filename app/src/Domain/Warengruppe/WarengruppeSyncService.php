@@ -10,6 +10,7 @@ use RuntimeException;
 use Welafix\Config\MappingLoader;
 use Welafix\Database\ConnectionFactory;
 use Welafix\Database\Db;
+use Welafix\Database\SchemaSyncService;
 use Welafix\Domain\FileDb\FileDbCache;
 
 final class WarengruppeSyncService
@@ -18,6 +19,7 @@ final class WarengruppeSyncService
     private ?string $lastSql = null;
     private ?array $lastContext = null;
     private FileDbCache $fileDbCache;
+    private SchemaSyncService $schemaSync;
     private const BASE_COLUMNS = [
         'afs_wg_id',
         'name',
@@ -34,6 +36,7 @@ final class WarengruppeSyncService
     {
         $this->factory = $factory;
         $this->fileDbCache = new FileDbCache();
+        $this->schemaSync = new SchemaSyncService();
     }
 
     /**
@@ -49,8 +52,11 @@ final class WarengruppeSyncService
 
         $mapping = $mappings['warengruppe'];
 
-        $mssqlRepo = new WarengruppeRepositoryMssql(Db::guardMssql(Db::mssql(), __METHOD__));
-        $sqliteRepo = new WarengruppeRepositorySqlite(Db::guardSqlite(Db::sqlite(), __METHOD__));
+        $mssql = Db::guardMssql(Db::mssql(), __METHOD__);
+        $sqlite = Db::guardSqlite(Db::sqlite(), __METHOD__);
+        $mssqlRepo = new WarengruppeRepositoryMssql($mssql);
+        $sqliteRepo = new WarengruppeRepositorySqlite($sqlite);
+        $this->schemaSync->ensureSqliteColumnsMatchMssql($mssql, $sqlite, 'dbo.Warengruppe', 'warengruppe');
 
         try {
             $rows = $mssqlRepo->fetchAllByMapping($mapping);
@@ -70,7 +76,7 @@ final class WarengruppeSyncService
             'errors_count' => 0,
         ];
 
-        $pdo = Db::guardSqlite(Db::sqlite(), __METHOD__);
+        $pdo = $sqlite;
         $existingColumns = $this->loadExistingColumns($pdo, 'warengruppe');
         $preparedRows = [];
         $newColumns = [];

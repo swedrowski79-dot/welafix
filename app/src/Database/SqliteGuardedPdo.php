@@ -15,19 +15,16 @@ final class SqliteGuardedPdo extends PDO
         $this->component = $component;
     }
 
-    public function exec($statement): int|false
+    public function exec(string $statement): int|false
     {
         $this->guardDialect((string)$statement);
         return parent::exec($statement);
     }
 
-    public function query(string $statement, ?int $fetchMode = null, mixed ...$fetchModeArgs)
+    public function query(string $query, ?int $fetchMode = null, mixed ...$fetchModeArgs): \PDOStatement|false
     {
-        $this->guardDialect($statement);
-        if ($fetchMode === null) {
-            return parent::query($statement);
-        }
-        return parent::query($statement, $fetchMode, ...$fetchModeArgs);
+        $this->guardDialect($query);
+        return parent::query($query, $fetchMode, ...$fetchModeArgs);
     }
 
     public function prepare(string $statement, array $options = []): \PDOStatement|false

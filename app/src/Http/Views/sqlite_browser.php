@@ -10,21 +10,28 @@ declare(strict_types=1);
     <button class="btn" id="search-btn" type="button">Suchen</button>
     <span class="muted" id="loading-indicator" style="display:none;">Lade…</span>
   </div>
+  <div class="btn-row" style="align-items: center; margin-top: 10px;">
+    <span class="muted">Total: <strong id="total-count">0</strong></span>
+    <span class="muted">Seite: <strong id="page-current">1</strong></span>
+    <label for="per-page">pro Seite</label>
+    <select id="per-page">
+      <option value="25">25</option>
+      <option value="50" selected>50</option>
+      <option value="100">100</option>
+      <option value="200">200</option>
+    </select>
+  </div>
   <div id="error-box" class="error" style="margin-top:10px; display:none;"></div>
 </div>
 
-<div class="card">
-  <div class="table-wrap">
+<div class="card flex full-height">
+  <div class="table-wrap table-scroll">
     <table id="data-table">
       <thead></thead>
       <tbody></tbody>
     </table>
   </div>
-  <div class="pagination">
-    <button class="btn" id="prev-btn" type="button">Zurück</button>
-    <button class="btn" id="next-btn" type="button">Weiter</button>
-    <span class="muted" id="page-info">Seite 1</span>
-  </div>
+  <?php require __DIR__ . '/_paginator.php'; ?>
 </div>
 
 <script>
@@ -39,13 +46,16 @@ declare(strict_types=1);
     const tbody = dataTable.querySelector('tbody');
     const prevBtn = document.getElementById('prev-btn');
     const nextBtn = document.getElementById('next-btn');
-    const pageInfo = document.getElementById('page-info');
+    const pageWindow = document.getElementById('page-window');
+    const totalCount = document.getElementById('total-count');
+    const pageCurrent = document.getElementById('page-current');
+    const perPageSelect = document.getElementById('per-page');
 
     const state = {
       table: '',
       q: '',
       page: 1,
-      pageSize: 50,
+      perPage: 50,
       totalRows: 0
     };
 
@@ -53,6 +63,7 @@ declare(strict_types=1);
       loadingIndicator.style.display = isLoading ? 'inline' : 'none';
       searchBtn.disabled = isLoading;
       tableSelect.disabled = isLoading;
+      perPageSelect.disabled = isLoading;
       prevBtn.disabled = isLoading;
       nextBtn.disabled = isLoading;
     };
@@ -101,11 +112,53 @@ declare(strict_types=1);
       });
     };
 
-    const updatePagination = () => {
-      const totalPages = Math.max(1, Math.ceil(state.totalRows / state.pageSize));
-      pageInfo.textContent = 'Seite ' + state.page + ' von ' + totalPages;
+    const buildPageWindow = (current, total) => {
+      const pages = [];
+      const add = (value) => pages.push(value);
+      if (total <= 7) {
+        for (let i = 1; i <= total; i++) add(i);
+        return pages;
+      }
+      add(1);
+      if (current > 4) add('...');
+      const start = Math.max(2, current - 1);
+      const end = Math.min(total - 1, current + 1);
+      for (let i = start; i <= end; i++) add(i);
+      if (current < total - 3) add('...');
+      add(total);
+      return pages;
+    };
+
+    const renderPaginator = () => {
+      const totalPages = Math.max(1, Math.ceil(state.totalRows / state.perPage));
+      pageWindow.innerHTML = '';
+      const pages = buildPageWindow(state.page, totalPages);
+      pages.forEach((p) => {
+        if (p === '...') {
+          const span = document.createElement('span');
+          span.className = 'muted';
+          span.textContent = '...';
+          pageWindow.appendChild(span);
+          return;
+        }
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'btn';
+        if (p === state.page) {
+          btn.disabled = true;
+        }
+        btn.textContent = String(p);
+        btn.addEventListener('click', async () => {
+          state.page = p;
+          await loadTableData();
+        });
+        pageWindow.appendChild(btn);
+      });
+
       prevBtn.disabled = state.page <= 1;
       nextBtn.disabled = state.page >= totalPages;
+      totalCount.textContent = String(state.totalRows);
+      pageCurrent.textContent = String(state.page);
     };
 
     const loadTableData = async () => {
@@ -116,7 +169,7 @@ declare(strict_types=1);
         const params = new URLSearchParams({
           name: state.table,
           page: String(state.page),
-          pageSize: String(state.pageSize)
+          per_page: String(state.perPage)
         });
         if (state.q) {
           params.set('q', state.q);
@@ -131,7 +184,7 @@ declare(strict_types=1);
 
         state.totalRows = json.totalRows || 0;
         renderTable(json.columns || [], json.rows || []);
-        updatePagination();
+        renderPaginator();
       } catch (e) {
         showError(e.message);
       } finally {
@@ -194,6 +247,12 @@ declare(strict_types=1);
       }
     });
 
+    perPageSelect.addEventListener('change', async () => {
+      state.perPage = parseInt(perPageSelect.value, 10) || 50;
+      state.page = 1;
+      await loadTableData();
+    });
+
     prevBtn.addEventListener('click', async () => {
       if (state.page > 1) {
         state.page -= 1;
@@ -202,7 +261,7 @@ declare(strict_types=1);
     });
 
     nextBtn.addEventListener('click', async () => {
-      const totalPages = Math.max(1, Math.ceil(state.totalRows / state.pageSize));
+      const totalPages = Math.max(1, Math.ceil(state.totalRows / state.perPage));
       if (state.page < totalPages) {
         state.page += 1;
         await loadTableData();
