@@ -31,19 +31,19 @@ final class SqliteBrowserController
 
             $name = isset($_GET['name']) ? trim((string)$_GET['name']) : '';
             if ($name === '') {
-                $this->jsonResponse(['error' => 'Tabellenname fehlt.'], 400);
+                $this->jsonResponse(['error' => 'Tabellenname fehlt.', 'sql' => null, 'params' => null], 400);
                 return;
             }
 
             $allowedTables = $this->getAllowedTables($pdo);
             if (!isset($allowedTables[$name])) {
-                $this->jsonResponse(['error' => 'Unbekannte Tabelle.'], 400);
+                $this->jsonResponse(['error' => 'Unbekannte Tabelle.', 'sql' => null, 'params' => null], 400);
                 return;
             }
 
             $tableInfo = $this->getTableInfo($pdo, $name);
             if ($tableInfo === []) {
-                $this->jsonResponse(['error' => 'Keine Spalten gefunden.'], 400);
+                $this->jsonResponse(['error' => 'Keine Spalten gefunden.', 'sql' => null, 'params' => null], 400);
                 return;
             }
             $columns = array_values(array_map(
@@ -52,7 +52,7 @@ final class SqliteBrowserController
             ));
             $columns = array_values(array_filter($columns, static fn(string $col): bool => $col !== ''));
             if ($columns === []) {
-                $this->jsonResponse(['error' => 'Keine Spalten gefunden.'], 400);
+                $this->jsonResponse(['error' => 'Keine Spalten gefunden.', 'sql' => null, 'params' => null], 400);
                 return;
             }
 
@@ -107,6 +107,8 @@ final class SqliteBrowserController
         } catch (\Throwable $e) {
             $this->jsonResponse([
                 'error' => $e->getMessage(),
+                'sql' => null,
+                'params' => null,
             ], 500);
         }
     }

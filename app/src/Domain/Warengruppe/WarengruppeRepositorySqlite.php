@@ -8,6 +8,8 @@ use PDO;
 final class WarengruppeRepositorySqlite
 {
     private PDO $pdo;
+    /** @var array<int, string>|null */
+    private ?array $columnCache = null;
 
     public function __construct(PDO $pdo)
     {
@@ -19,7 +21,9 @@ final class WarengruppeRepositorySqlite
      */
     public function findById(int $afsWgId): ?array
     {
-        $stmt = $this->pdo->prepare('SELECT * FROM warengruppe WHERE afs_wg_id = :id LIMIT 1');
+        $columns = $this->getColumns();
+        $selectList = implode(', ', array_map([$this, 'quoteIdentifier'], $columns));
+        $stmt = $this->pdo->prepare('SELECT ' . $selectList . ' FROM warengruppe WHERE afs_wg_id = :id LIMIT 1');
         $stmt->bindValue(':id', $afsWgId, PDO::PARAM_INT);
         $stmt->execute();
         $row = $stmt->fetch(PDO::FETCH_ASSOC);
@@ -219,6 +223,30 @@ final class WarengruppeRepositorySqlite
     private function quoteIdentifier(string $name): string
     {
         return '"' . str_replace('"', '""', $name) . '"';
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    private function getColumns(): array
+    {
+        if ($this->columnCache !== null) {
+            return $this->columnCache;
+        }
+        $stmt = $this->pdo->query('PRAGMA table_info(warengruppe)');
+        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+        $cols = [];
+        foreach ($rows as $row) {
+            $name = (string)($row['name'] ?? '');
+            if ($name !== '') {
+                $cols[] = $name;
+            }
+        }
+        if ($cols === []) {
+            $cols = ['afs_wg_id', 'name', 'parent_id', 'path', 'path_ids', 'last_seen_at', 'changed', 'change_reason'];
+        }
+        $this->columnCache = $cols;
+        return $cols;
     }
 
     /**

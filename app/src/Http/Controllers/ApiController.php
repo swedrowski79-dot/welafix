@@ -46,6 +46,8 @@ final class ApiController
             $this->jsonResponse([
                 'ok' => false,
                 'error' => $e->getMessage(),
+                'sql' => null,
+                'params' => null,
             ], 500);
         }
     }
@@ -78,6 +80,8 @@ final class ApiController
             $this->jsonResponse([
                 'ok' => false,
                 'error' => $e->getMessage(),
+                'sql' => null,
+                'params' => null,
             ], 500);
         }
     }
@@ -89,6 +93,8 @@ final class ApiController
             $this->jsonResponse([
                 'ok' => false,
                 'error' => 'Unbekannter Typ.',
+                'sql' => null,
+                'params' => null,
             ], 400);
             return;
         }
@@ -120,6 +126,8 @@ final class ApiController
             $this->jsonResponse([
                 'ok' => false,
                 'error' => 'Dokument nicht gefunden.',
+                'sql' => null,
+                'params' => null,
             ], 404);
             return;
         }
@@ -138,6 +146,8 @@ final class ApiController
             $this->jsonResponse([
                 'ok' => false,
                 'error' => 'entity_type und entity_id sind erforderlich.',
+                'sql' => null,
+                'params' => null,
             ], 400);
             return;
         }

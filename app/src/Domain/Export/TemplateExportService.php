@@ -89,7 +89,12 @@ final class TemplateExportService
             return;
         }
 
-        $rows = $pdo->query('SELECT * FROM warengruppe')?->fetchAll(PDO::FETCH_ASSOC) ?: [];
+        $cols = $this->fetchSqliteColumns($pdo, 'warengruppe');
+        if ($cols === []) {
+            $cols = ['afs_wg_id', 'name', 'parent_id', 'path', 'path_ids', 'last_seen_at', 'changed', 'change_reason'];
+        }
+        $selectList = implode(', ', array_map([$this, 'quoteIdentifier'], $cols));
+        $rows = $pdo->query('SELECT ' . $selectList . ' FROM warengruppe')?->fetchAll(PDO::FETCH_ASSOC) ?: [];
         $dir = $this->outputDir . '/warengruppe';
         $this->ensureDir($dir);
 

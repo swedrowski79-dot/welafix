@@ -50,7 +50,7 @@ final class App
                 $mappings = $loader->loadAll();
             } catch (\RuntimeException $e) {
                 http_response_code(500);
-                echo json_encode(['error' => $e->getMessage()]);
+                echo json_encode(['error' => $e->getMessage(), 'sql' => null, 'params' => null]);
                 return;
             }
 
@@ -204,7 +204,7 @@ final class App
                 echo json_encode($stats);
             } catch (\Throwable $e) {
                 http_response_code(500);
-                echo json_encode(['error' => $e->getMessage()]);
+                echo json_encode(['error' => $e->getMessage(), 'sql' => null, 'params' => null]);
             }
             return;
         }
@@ -217,7 +217,7 @@ final class App
                 echo json_encode($stats);
             } catch (\Throwable $e) {
                 http_response_code(500);
-                echo json_encode(['error' => $e->getMessage()]);
+                echo json_encode(['error' => $e->getMessage(), 'sql' => null, 'params' => null]);
             }
             return;
         }
