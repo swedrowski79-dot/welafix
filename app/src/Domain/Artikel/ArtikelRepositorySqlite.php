@@ -187,7 +187,7 @@ final class ArtikelRepositorySqlite
 
     private function quoteIdentifier(string $name): string
     {
-        return '\"' . str_replace('\"', '\"\"', $name) . '\"';
+        return '"' . str_replace('"', '""', $name) . '"';
     }
 
     /**

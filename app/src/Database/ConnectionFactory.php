@@ -5,6 +5,7 @@ namespace Welafix\Database;
 
 use PDO;
 use RuntimeException;
+use Welafix\Database\SqliteGuardedPdo;
 
 final class ConnectionFactory
 {
@@ -25,7 +26,7 @@ final class ConnectionFactory
             mkdir($dir, 0777, true);
         }
 
-        $pdo = new PDO('sqlite:' . $path);
+        $pdo = new SqliteGuardedPdo('sqlite:' . $path);
         $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
         $this->sqlite = $pdo;
         return $pdo;

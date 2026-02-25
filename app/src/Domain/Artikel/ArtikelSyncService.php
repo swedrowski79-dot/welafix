@@ -8,6 +8,7 @@ use DateTimeZone;
 use RuntimeException;
 use Welafix\Config\MappingLoader;
 use Welafix\Database\ConnectionFactory;
+use Welafix\Database\Db;
 use Welafix\Domain\FileDb\FileDbCache;
 
 final class ArtikelSyncService
@@ -45,14 +46,14 @@ final class ArtikelSyncService
      */
     public function processBatch(string $afterKey, int $batchSize = 500): array
     {
-        $pdo = $this->factory->sqlite();
+        $pdo = Db::guardSqlite(Db::sqlite(), __METHOD__);
         $this->ensureStateTable($pdo);
 
         if ($afterKey === '') {
             $this->resetState($pdo);
         }
 
-        $mssqlRepo = new ArtikelRepositoryMssql($this->factory->mssql());
+        $mssqlRepo = new ArtikelRepositoryMssql(Db::guardMssql(Db::mssql(), __METHOD__));
         $sqliteRepo = new ArtikelRepositorySqlite($pdo);
         $sqliteRepo->ensureTable();
 
@@ -437,7 +438,7 @@ final class ArtikelSyncService
 
     private function quoteIdentifier(string $name): string
     {
-        return '\"' . str_replace('\"', '\"\"', $name) . '\"';
+        return '"' . str_replace('"', '""', $name) . '"';
     }
 
     private function loadArtikelMapping(): array

@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace Welafix\Bootstrap;
 
 use Welafix\Database\ConnectionFactory;
+use Welafix\Database\Db;
 use Welafix\Config\MappingLoader;
 use Welafix\Http\Controllers\DashboardController;
 use Welafix\Http\Controllers\SqliteBrowserController;
@@ -21,8 +22,8 @@ final class App
 
         // ensure SQLite exists / migrated
         $factory = new ConnectionFactory();
-        $factory->ensureSqliteMigrated();
-        $factory->ensureMediaMigrated();
+        Db::setFactory($factory);
+        Db::ensureMigrated();
 
         if ($path === '/' || $path === '/dashboard') {
             (new DashboardController($factory))->index();

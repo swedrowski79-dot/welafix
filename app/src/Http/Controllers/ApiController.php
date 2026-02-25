@@ -8,6 +8,7 @@ use DateTimeZone;
 use PDO;
 use RuntimeException;
 use Welafix\Database\ConnectionFactory;
+use Welafix\Database\Db;
 use Welafix\Domain\Artikel\ArtikelSyncService;
 use Welafix\Domain\Document\DocumentRepositorySqlite;
 
@@ -28,7 +29,7 @@ final class ApiController
     public function testMssql(): void
     {
         try {
-            $pdo = $this->factory->mssql();
+            $pdo = Db::guardMssql(Db::mssql(), __METHOD__);
             $stmt = $pdo->query('SELECT DB_NAME() AS database_name, @@SERVERNAME AS server_name');
             $row = $stmt->fetch(PDO::FETCH_ASSOC) ?: [];
 
@@ -64,7 +65,7 @@ final class ApiController
                 throw new RuntimeException('SQLite DB ist nicht lesbar.');
             }
 
-            $pdo = $this->factory->sqlite();
+            $pdo = Db::guardSqlite(Db::sqlite(), __METHOD__);
             $pdo->query('SELECT 1');
 
             $this->jsonResponse([

@@ -9,6 +9,7 @@ use PDO;
 use RuntimeException;
 use Welafix\Config\MappingLoader;
 use Welafix\Database\ConnectionFactory;
+use Welafix\Database\Db;
 use Welafix\Domain\FileDb\FileDbCache;
 
 final class WarengruppeSyncService
@@ -48,8 +49,8 @@ final class WarengruppeSyncService
 
         $mapping = $mappings['warengruppe'];
 
-        $mssqlRepo = new WarengruppeRepositoryMssql($this->factory->mssql());
-        $sqliteRepo = new WarengruppeRepositorySqlite($this->factory->sqlite());
+        $mssqlRepo = new WarengruppeRepositoryMssql(Db::guardMssql(Db::mssql(), __METHOD__));
+        $sqliteRepo = new WarengruppeRepositorySqlite(Db::guardSqlite(Db::sqlite(), __METHOD__));
 
         try {
             $rows = $mssqlRepo->fetchAllByMapping($mapping);
@@ -69,7 +70,7 @@ final class WarengruppeSyncService
             'errors_count' => 0,
         ];
 
-        $pdo = $this->factory->sqlite();
+        $pdo = Db::guardSqlite(Db::sqlite(), __METHOD__);
         $existingColumns = $this->loadExistingColumns($pdo, 'warengruppe');
         $preparedRows = [];
         $newColumns = [];
@@ -363,7 +364,7 @@ final class WarengruppeSyncService
 
     private function quoteIdentifier(string $name): string
     {
-        return '\"' . str_replace('\"', '\"\"', $name) . '\"';
+        return '"' . str_replace('"', '""', $name) . '"';
     }
 
     private function log(string $message): void

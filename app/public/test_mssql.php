@@ -8,8 +8,7 @@ require __DIR__ . '/../src/Bootstrap/autoload.php';
 header('Content-Type: text/plain; charset=utf-8');
 
 try {
-    $factory = new \Welafix\Database\ConnectionFactory();
-    $pdo = $factory->mssql();
+    $pdo = \Welafix\Database\Db::guardMssql(\Welafix\Database\Db::mssql(), __METHOD__);
     $stmt = $pdo->query('SELECT TOP 5 name FROM sys.tables ORDER BY name');
     $tables = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
     echo "OK\n";
