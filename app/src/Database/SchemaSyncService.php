@@ -32,7 +32,7 @@ final class SchemaSyncService
         if ($added !== []) {
             $this->ensureChangeLog($sqlite);
             $stmt = $sqlite->prepare(
-                'INSERT INTO sqlite_schema_changes (table_name, column_name, added_at)
+                'INSERT INTO app_schema_changes (table_name, column_name, added_at)
                  VALUES (:table_name, :column_name, :added_at)'
             );
             $now = gmdate(DATE_ATOM);
@@ -101,7 +101,7 @@ final class SchemaSyncService
     private function ensureChangeLog(PDO $sqlite): void
     {
         $sqlite->exec(
-            'CREATE TABLE IF NOT EXISTS sqlite_schema_changes (
+            'CREATE TABLE IF NOT EXISTS app_schema_changes (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 table_name TEXT NOT NULL,
                 column_name TEXT NOT NULL,
