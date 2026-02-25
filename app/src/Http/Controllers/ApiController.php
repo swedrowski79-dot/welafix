@@ -51,9 +51,12 @@ final class ApiController
 
     public function testSqlite(): void
     {
-        $path = getenv('SQLITE_PATH') ?: (__DIR__ . '/../../../storage/app.db');
+        $path = getenv('SQLITE_PATH') ?: '';
 
         try {
+            if ($path === '') {
+                throw new RuntimeException('SQLITE_PATH ist nicht gesetzt.');
+            }
             if (!file_exists($path)) {
                 throw new RuntimeException('SQLite DB nicht gefunden.');
             }

@@ -16,7 +16,10 @@ final class ConnectionFactory
     {
         if ($this->sqlite) return $this->sqlite;
 
-        $path = getenv('SQLITE_PATH') ?: (__DIR__ . '/../../storage/app.db');
+        $path = getenv('SQLITE_PATH') ?: '';
+        if ($path === '') {
+            throw new RuntimeException('SQLITE_PATH ist nicht gesetzt.');
+        }
         $dir = dirname($path);
         if (!is_dir($dir)) {
             mkdir($dir, 0777, true);

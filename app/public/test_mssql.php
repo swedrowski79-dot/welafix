@@ -1,24 +1,20 @@
 <?php
-$host = getenv('MSSQL_HOST');
-$port = getenv('MSSQL_PORT') ?: '1433';
-$db   = getenv('MSSQL_DB');
-$user = getenv('MSSQL_USER');
-$pass = getenv('MSSQL_PASS');
+declare(strict_types=1);
 
-$encrypt = getenv('MSSQL_ENCRYPT') === 'true' ? 'yes' : 'no';
-$trust   = getenv('MSSQL_TRUST_CERT') === 'true' ? 'yes' : 'no';
+require __DIR__ . '/../src/Bootstrap/autoload.php';
 
-$dsn = "sqlsrv:Server={$host},{$port};Database={$db};Encrypt={$encrypt};TrustServerCertificate={$trust}";
+\Welafix\Bootstrap\Env::load(__DIR__ . '/../.env');
+
+header('Content-Type: text/plain; charset=utf-8');
 
 try {
-  $pdo = new PDO($dsn, $user, $pass, [
-    PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION
-  ]);
-  $stmt = $pdo->query("SELECT TOP 5 name FROM sys.tables ORDER BY name");
-  echo "<pre>OK\n";
-  print_r($stmt->fetchAll(PDO::FETCH_ASSOC));
-  echo "</pre>";
+    $factory = new \Welafix\Database\ConnectionFactory();
+    $pdo = $factory->mssql();
+    $stmt = $pdo->query('SELECT TOP 5 name FROM sys.tables ORDER BY name');
+    $tables = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+    echo "OK\n";
+    echo json_encode($tables, JSON_PRETTY_PRINT);
 } catch (Throwable $e) {
-  http_response_code(500);
-  echo "<pre>FAIL\n".$e->getMessage()."\n</pre>";
+    http_response_code(500);
+    echo "FAIL\n" . $e->getMessage() . "\n";
 }

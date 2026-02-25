@@ -212,7 +212,10 @@ final class App
 
 
         http_response_code(404);
-        echo "404 Not Found";
+        $view = __DIR__ . '/../Http/Views/404.php';
+        $layout = __DIR__ . '/../Http/Views/layout.php';
+        $data = [];
+        require $layout;
     }
 
     private function truncateSql(string $sql): string

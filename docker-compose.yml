@@ -13,27 +13,13 @@ services:
       - ./storage:/var/www/html/storage
       - ./logs:/var/www/html/logs
       # Optional: Host-Verzeichnisse für Bilder/Dokumente einbinden (anpassen)
-      - C:\Welafix_old\AFS\Webshop\Photos:/var/www/html/storage/pictures:ro
-      - C:\Welafix_old\AFS\Webshop\Dokumente:/var/www/html/storage/documents:ro
-      - c:\Welafix_old\AFS\Webshop\data:/var/www/html/storage/data:ro
+      - "C:\\Welafix_old\\AFS\\Webshop\\Photos:/var/www/html/storage/pictures:ro"
+      - "C:\\Welafix_old\\AFS\\Webshop\\Dokumente:/var/www/html/storage/documents:ro"
+      - "C:\\Welafix_old\\AFS\\Webshop\\data:/var/www/html/storage/data:ro"
     environment:
       APP_ENV: "local"
       TZ: "Europe/Berlin"
-
-      # MSSQL (AFS)
-      MSSQL_HOST: "10.0.1.82"
-      MSSQL_PORT: "1435"
-      MSSQL_DB: "AFS_2018"
-      MSSQL_USER: "sa"
-      MSSQL_PASS: "W3laf!x"
-      MSSQL_ENCRYPT: "false"
-      MSSQL_TRUST_CERT: "true"
-
-      # SQLite
-      SQLITE_PATH: "/var/www/html/storage/app.db"
-
-      # XT-API (Shop)
-      XT_API_BASE: "http://host.docker.internal/xt-api"
-      XT_API_KEY: "CHANGE_ME"
+    env_file:
+      - ./.env
     extra_hosts:
       - "host.docker.internal:host-gateway"
