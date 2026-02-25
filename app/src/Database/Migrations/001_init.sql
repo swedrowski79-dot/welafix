@@ -11,6 +11,8 @@ CREATE TABLE IF NOT EXISTS artikel (
   stock INTEGER,
   online INTEGER,
   seo_url TEXT,
+  changed_fields TEXT,
+  last_synced_at TEXT,
   last_seen_at TEXT,
   changed INTEGER DEFAULT 0,
   change_reason TEXT
@@ -27,6 +29,8 @@ CREATE TABLE IF NOT EXISTS warengruppe (
   path TEXT,
   path_ids TEXT,
   seo_url TEXT,
+  changed_fields TEXT,
+  last_synced_at TEXT,
   last_seen_at TEXT,
   changed INTEGER DEFAULT 0,
   change_reason TEXT
@@ -102,3 +106,12 @@ CREATE TABLE IF NOT EXISTS document_files (
 );
 
 CREATE INDEX IF NOT EXISTS idx_document_files_document_id ON document_files(document_id);
+
+CREATE TABLE IF NOT EXISTS change_history (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  entity_type TEXT NOT NULL,
+  entity_key TEXT NOT NULL,
+  changed_at TEXT NOT NULL,
+  diff_json TEXT NOT NULL,
+  source TEXT NULL
+);

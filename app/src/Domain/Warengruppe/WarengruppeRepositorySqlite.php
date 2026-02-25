@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace Welafix\Domain\Warengruppe;
 
+use Welafix\Domain\ChangeTracking\ChangeTracker;
 use PDO;
 
 final class WarengruppeRepositorySqlite
@@ -10,10 +11,12 @@ final class WarengruppeRepositorySqlite
     private PDO $pdo;
     /** @var array<int, string>|null */
     private ?array $columnCache = null;
+    private ChangeTracker $tracker;
 
     public function __construct(PDO $pdo)
     {
         $this->pdo = $pdo;
+        $this->tracker = new ChangeTracker();
     }
 
     /**
@@ -36,11 +39,12 @@ final class WarengruppeRepositorySqlite
     /**
      * @param array<string, mixed> $extraFields
      */
-    public function upsert(int $afsWgId, string $name, ?int $parentId, array $extraFields, string $seenAtIso): array
+    public function upsert(int $afsWgId, string $name, ?int $parentId, array $extraFields, string $seenAtIso, array $diffColumns = []): array
     {
         $existing = $this->findById($afsWgId);
         $parentIdNormalized = $this->normalizeParentId($parentId);
         $extraKeys = array_keys($extraFields);
+        $diff = $this->tracker->buildDiff($existing, $extraFields, $diffColumns);
 
         if ($existing === null) {
             $columns = ['afs_wg_id', 'name', 'parent_id'];
@@ -50,10 +54,14 @@ final class WarengruppeRepositorySqlite
                 $params[] = ':' . $key;
             }
             $columns[] = 'last_seen_at';
+            $columns[] = 'last_synced_at';
             $columns[] = 'changed';
+            $columns[] = 'changed_fields';
             $columns[] = 'change_reason';
             $params[] = ':last_seen_at';
+            $params[] = ':last_synced_at';
             $params[] = ':changed';
+            $params[] = ':changed_fields';
             $params[] = ':change_reason';
 
             $stmt = $this->pdo->prepare(
@@ -71,10 +79,15 @@ final class WarengruppeRepositorySqlite
                 $this->bindNullableText($stmt, ':' . $key, $extraFields[$key] ?? null);
             }
             $stmt->bindValue(':last_seen_at', $seenAtIso, PDO::PARAM_STR);
+            $stmt->bindValue(':last_synced_at', $seenAtIso, PDO::PARAM_STR);
             $stmt->bindValue(':changed', 1, PDO::PARAM_INT);
+            $stmt->bindValue(':changed_fields', $this->tracker->encodeDiff($diff), PDO::PARAM_STR);
             $stmt->bindValue(':change_reason', 'new', PDO::PARAM_STR);
             $stmt->execute();
-            return ['inserted' => true, 'updated' => false, 'unchanged' => false];
+            if ($diff !== []) {
+                $this->tracker->writeHistory($this->pdo, 'warengruppe', (string)$afsWgId, $seenAtIso, $diff, 'afs');
+            }
+            return ['inserted' => true, 'updated' => false, 'unchanged' => false, 'diff' => $diff];
         }
 
         $reasons = [];
@@ -91,12 +104,10 @@ final class WarengruppeRepositorySqlite
             $reasons[] = 'extras';
         }
 
-        $changed = (int)$existing['changed'];
-        $changeReason = (string)($existing['change_reason'] ?? '');
-
-        if ($reasons !== []) {
-            $changed = 1;
-            $changeReason = $this->mergeReasons($changeReason, $reasons);
+        $changed = $diff !== [] ? 1 : 0;
+        $changeReason = '';
+        if ($diff !== [] && $reasons !== []) {
+            $changeReason = $this->mergeReasons((string)($existing['change_reason'] ?? ''), $reasons);
         }
 
         $setParts = [
@@ -107,7 +118,9 @@ final class WarengruppeRepositorySqlite
             $setParts[] = $this->quoteIdentifier($key) . ' = :' . $key;
         }
         $setParts[] = 'last_seen_at = :last_seen_at';
+        $setParts[] = 'last_synced_at = :last_synced_at';
         $setParts[] = 'changed = :changed';
+        $setParts[] = 'changed_fields = :changed_fields';
         $setParts[] = 'change_reason = :change_reason';
 
         $stmt = $this->pdo->prepare(
@@ -126,7 +139,13 @@ final class WarengruppeRepositorySqlite
             $this->bindNullableText($stmt, ':' . $key, $extraFields[$key] ?? null);
         }
         $stmt->bindValue(':last_seen_at', $seenAtIso, PDO::PARAM_STR);
+        $stmt->bindValue(':last_synced_at', $seenAtIso, PDO::PARAM_STR);
         $stmt->bindValue(':changed', $changed, PDO::PARAM_INT);
+        if ($diff !== []) {
+            $stmt->bindValue(':changed_fields', $this->tracker->encodeDiff($diff), PDO::PARAM_STR);
+        } else {
+            $stmt->bindValue(':changed_fields', null, PDO::PARAM_NULL);
+        }
         if ($changeReason !== '') {
             $stmt->bindValue(':change_reason', $changeReason, PDO::PARAM_STR);
         } else {
@@ -134,11 +153,14 @@ final class WarengruppeRepositorySqlite
         }
         $stmt->execute();
 
+        if ($diff !== []) {
+            $this->tracker->writeHistory($this->pdo, 'warengruppe', (string)$afsWgId, $seenAtIso, $diff, 'afs');
+        }
         if ($reasons !== []) {
-            return ['inserted' => false, 'updated' => true, 'unchanged' => false];
+            return ['inserted' => false, 'updated' => true, 'unchanged' => false, 'diff' => $diff];
         }
 
-        return ['inserted' => false, 'updated' => false, 'unchanged' => true];
+        return ['inserted' => false, 'updated' => false, 'unchanged' => true, 'diff' => $diff];
     }
 
     public function updatePath(int $afsWgId, string $path, string $pathIds): bool
@@ -267,5 +289,10 @@ final class WarengruppeRepositorySqlite
             $items[$reason] = true;
         }
         return implode(',', array_keys($items));
+    }
+
+    public function encodeDiff(array $diff): string
+    {
+        return $this->tracker->encodeDiff($diff);
     }
 }

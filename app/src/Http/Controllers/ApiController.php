@@ -202,17 +202,18 @@ final class ApiController
             $mapping = new MappingService();
             $allowed = array_values(array_unique(array_merge(
                 $mapping->getAllowedColumns('artikel'),
-                ['seo_url']
+                ['seo_url', 'changed', 'changed_fields', 'last_synced_at']
             )));
             $pdo = $this->factory->sqlite();
-            $selectList = implode(', ', array_map([$this, 'quoteIdentifier'], $allowed));
-            $sql = 'SELECT ' . $selectList . ' FROM artikel LIMIT :limit OFFSET :offset';
+            $selectList = implode(', ', array_map(fn(string $col): string => 'a.' . $this->quoteIdentifier($col), $allowed));
+            $selectList .= ', w.seo_url AS wg_seo_url, a.warengruppe_id AS _wg_id';
+            $sql = 'SELECT ' . $selectList . ' FROM artikel a LEFT JOIN warengruppe w ON w.afs_wg_id = a.warengruppe_id LIMIT :limit OFFSET :offset';
             $stmt = $pdo->prepare($sql);
             $stmt->bindValue(':limit', $limit, PDO::PARAM_INT);
             $stmt->bindValue(':offset', $offset, PDO::PARAM_INT);
             $stmt->execute();
             $rows = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
-            $rows = $mapping->filterRows($rows, $allowed);
+            $rows = $this->appendArtikelSeoUrl($mapping->filterRows($rows, $allowed), $rows);
             $this->logSeoUrlKeysOnce('artikel', $rows);
             $this->jsonResponse([
                 'ok' => true,
@@ -239,7 +240,7 @@ final class ApiController
             $mapping = new MappingService();
             $allowed = array_values(array_unique(array_merge(
                 $mapping->getAllowedColumns('warengruppe'),
-                ['seo_url']
+                ['seo_url', 'changed', 'changed_fields', 'last_synced_at']
             )));
             $pdo = $this->factory->sqlite();
             $selectList = implode(', ', array_map([$this, 'quoteIdentifier'], $allowed));
@@ -275,6 +276,54 @@ final class ApiController
         http_response_code($status);
         header('Content-Type: application/json; charset=utf-8');
         echo json_encode($payload, JSON_PRETTY_PRINT);
+    }
+
+    /**
+     * @param array<int, array<string, mixed>> $filteredRows
+     * @param array<int, array<string, mixed>> $rawRows
+     * @return array<int, array<string, mixed>>
+     */
+    private function appendArtikelSeoUrl(array $filteredRows, array $rawRows): array
+    {
+        $result = [];
+        foreach ($filteredRows as $index => $row) {
+            $raw = $rawRows[$index] ?? [];
+            $wgSeo = (string)($raw['wg_seo_url'] ?? '');
+            $name = (string)($row['Bezeichnung'] ?? ($row['name'] ?? ''));
+            $slug = strtolower(xt_filterAutoUrlText_inline($name, 'de'));
+
+            if ($wgSeo === '') {
+                $this->logMissingWarengruppeOnce($raw);
+                $wgSeo = 'de';
+            }
+
+            $row['seo_url'] = rtrim($wgSeo, '/') . ($slug !== '' ? '/' . $slug : '');
+            $result[] = $row;
+        }
+        return $result;
+    }
+
+    /**
+     * @param array<string, mixed> $row
+     */
+    private function logMissingWarengruppeOnce(array $row): void
+    {
+        if (!is_dev_env()) {
+            return;
+        }
+
+        static $logged = false;
+        if ($logged) {
+            return;
+        }
+        $logged = true;
+
+        $artikelnummer = (string)($row['Artikelnummer'] ?? ($row['artikelnummer'] ?? ''));
+        $warengruppeId = (string)($row['_wg_id'] ?? ($row['warengruppe_id'] ?? ''));
+        $timestamp = (new \DateTimeImmutable('now', new \DateTimeZone('UTC')))->format(DATE_ATOM);
+        $line = "[{$timestamp}] missing wg mapping: warengruppe_id={$warengruppeId} artikelnummer={$artikelnummer}\n";
+        $path = __DIR__ . '/../../../logs/app.log';
+        @file_put_contents($path, $line, FILE_APPEND);
     }
 
     /**

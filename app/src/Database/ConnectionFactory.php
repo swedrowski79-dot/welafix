@@ -101,6 +101,8 @@ final class ConnectionFactory
             'stock' => 'INTEGER',
             'online' => 'INTEGER',
             'seo_url' => 'TEXT',
+            'changed_fields' => 'TEXT',
+            'last_synced_at' => 'TEXT',
             'last_seen_at' => 'TEXT',
             'changed' => 'INTEGER DEFAULT 0',
             'change_reason' => 'TEXT',
@@ -115,12 +117,15 @@ final class ConnectionFactory
             'path' => 'TEXT',
             'path_ids' => 'TEXT',
             'seo_url' => 'TEXT',
+            'changed_fields' => 'TEXT',
+            'last_synced_at' => 'TEXT',
             'last_seen_at' => 'TEXT',
             'changed' => 'INTEGER DEFAULT 0',
             'change_reason' => 'TEXT',
         ]);
 
         $this->ensureDocumentSchema($pdo);
+        $this->ensureChangeHistory($pdo);
     }
 
     public function ensureMediaMigrated(): void
@@ -235,6 +240,20 @@ final class ConnectionFactory
             )'
         );
         $pdo->exec('CREATE INDEX IF NOT EXISTS idx_document_files_document_id ON document_files(document_id)');
+    }
+
+    private function ensureChangeHistory(PDO $pdo): void
+    {
+        $pdo->exec(
+            'CREATE TABLE IF NOT EXISTS change_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                entity_type TEXT NOT NULL,
+                entity_key TEXT NOT NULL,
+                changed_at TEXT NOT NULL,
+                diff_json TEXT NOT NULL,
+                source TEXT NULL
+            )'
+        );
     }
 
     private function logMssqlConfigOnce(string $host, string $port, string $db, string $user): void

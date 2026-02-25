@@ -10,6 +10,7 @@ use Welafix\Config\MappingService;
 use Welafix\Database\ConnectionFactory;
 use Welafix\Database\Db;
 use Welafix\Database\SchemaSyncService;
+use Welafix\Domain\FileDb\FileDbWriter;
 use Welafix\Infrastructure\Sqlite\SqliteSchemaHelper;
 
 final class ArtikelSyncService
@@ -89,8 +90,10 @@ final class ArtikelSyncService
 
             $extraKeys = array_values(array_unique(array_merge($this->getRawFieldNames($selectFields), ['seo_url'])));
             sort($extraKeys, SORT_STRING);
+            $diffColumns = $extraKeys;
 
             $wgSeoMap = $this->loadWarengruppeSeoMap($pdo);
+            $fileDbWriter = new FileDbWriter();
 
             foreach ($rows as $row) {
                 $row = array_intersect_key($row, $allowedLookup);
@@ -156,10 +159,24 @@ final class ArtikelSyncService
 
                         $rowHash = $this->computeRowHash($data, $extras);
 
-                        $result = $sqliteRepo->upsertArtikel($data, $seenAt, $extras, $extraKeys, $rowHash);
+                        $result = $sqliteRepo->upsertArtikel($data, $seenAt, $extras, $extraKeys, $rowHash, $diffColumns);
                         if ($result['inserted']) $batchStats['inserted']++;
                         if ($result['updated']) $batchStats['updated']++;
                         if ($result['unchanged']) $batchStats['unchanged']++;
+
+                        $diff = $result['diff'] ?? [];
+                        if ($diff !== []) {
+                            $fields = $extras;
+                            $fields['changed'] = 1;
+                            $fields['changed_fields'] = $sqliteRepo->encodeDiff($diff);
+                            $fields['last_synced_at'] = $seenAt;
+                            $fileDbWriter->writeArtikel(
+                                $artikelnummer,
+                                $fields,
+                                array_keys($diff),
+                                ['changed', 'changed_fields', 'last_synced_at']
+                            );
+                        }
                     } catch (\Throwable $e) {
                         $batchStats['errors_count']++;
                         $this->lastContext = [

@@ -8,7 +8,7 @@ return [
     // Default-Filter aus dem YAML
     // Mandant = 1
     // Internet = 0  (laut deiner alten Config)
-    'where' => "Mandant = 1 AND Internet = 0",
+    'where' => "Mandant = 1 AND Internet = 1",
 
     // Business-Key laut YAML
     'key'   => 'Warengruppe',

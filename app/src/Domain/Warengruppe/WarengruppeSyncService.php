@@ -11,6 +11,8 @@ use Welafix\Config\MappingService;
 use Welafix\Database\ConnectionFactory;
 use Welafix\Database\Db;
 use Welafix\Database\SchemaSyncService;
+use Welafix\Domain\ChangeTracking\ChangeTracker;
+use Welafix\Domain\FileDb\FileDbWriter;
 use Welafix\Infrastructure\Sqlite\SqliteSchemaHelper;
 
 final class WarengruppeSyncService
@@ -72,6 +74,8 @@ final class WarengruppeSyncService
         $preparedRows = [];
         $newColumns = [];
         $allowedLookup = array_flip($selectFields);
+        $fileDbWriter = new FileDbWriter();
+        $diffColumns = $selectFields;
 
         foreach ($rows as $row) {
             $row = array_intersect_key($row, $allowedLookup);
@@ -116,10 +120,25 @@ final class WarengruppeSyncService
 
                     $extras = $this->fillMissingExtras($prepared['extras'], $this->getRawFieldNames($selectFields));
 
-                    $result = $sqliteRepo->upsert($afsWgId, $name, $parentId, $extras, $seenAt);
+                    $result = $sqliteRepo->upsert($afsWgId, $name, $parentId, $extras, $seenAt, $diffColumns);
                     if ($result['inserted']) $stats['inserted']++;
                     if ($result['updated']) $stats['updated']++;
                     if ($result['unchanged']) $stats['unchanged']++;
+
+                    $diff = $result['diff'] ?? [];
+                    if ($diff !== []) {
+                        $fields = $extras;
+                        $fields['changed'] = 1;
+                        $fields['changed_fields'] = $sqliteRepo->encodeDiff($diff);
+                        $fields['last_synced_at'] = $seenAt;
+                        $fileDbWriter->writeWarengruppe(
+                            $name,
+                            (string)$afsWgId,
+                            $fields,
+                            array_keys($diff),
+                            ['changed', 'changed_fields', 'last_synced_at']
+                        );
+                    }
                 } catch (\Throwable $e) {
                     $stats['errors_count']++;
                     $this->log('Import-Fehler: ' . $e->getMessage());
@@ -151,6 +170,8 @@ final class WarengruppeSyncService
         $updated = 0;
         $seoCache = [];
         $seoBuilding = [];
+        $tracker = new ChangeTracker();
+        $fileDbWriter = new FileDbWriter();
 
         $computeSeo = function (int $id) use (&$computeSeo, &$items, &$seoCache, &$seoBuilding): string {
             if (isset($seoCache[$id])) {
@@ -199,6 +220,24 @@ final class WarengruppeSyncService
                 }
 
                 $changeReason = $this->mergeReasons((string)($item['change_reason'] ?? ''), $reasons);
+                $mergedDiff = [];
+                $now = (new DateTimeImmutable('now', new DateTimeZone('UTC')))->format(DATE_ATOM);
+                if ($seoChanged) {
+                    $existingDiff = [];
+                    $raw = (string)($item['changed_fields'] ?? '');
+                    if ($raw !== '') {
+                        $decoded = json_decode($raw, true);
+                        if (is_array($decoded)) {
+                            $existingDiff = $decoded;
+                        }
+                    }
+                    $existingDiff['seo_url'] = [
+                        'old' => (string)($item['seo_url'] ?? ''),
+                        'new' => $seoUrl,
+                    ];
+                    $mergedDiff = $existingDiff;
+                    $tracker->writeHistory($pdo, 'warengruppe', (string)$idInt, $now, $existingDiff, 'afs');
+                }
 
                 $stmt = $pdo->prepare(
                     'UPDATE warengruppe
@@ -206,6 +245,8 @@ final class WarengruppeSyncService
                          path_ids = :path_ids,
                          seo_url = :seo_url,
                          changed = 1,
+                         changed_fields = :changed_fields,
+                         last_synced_at = :last_synced_at,
                          change_reason = :change_reason
                      WHERE afs_wg_id = :id'
                 );
@@ -213,9 +254,27 @@ final class WarengruppeSyncService
                     ':path' => $path,
                     ':path_ids' => $pathIds,
                     ':seo_url' => $seoUrl,
+                    ':changed_fields' => $mergedDiff !== [] ? $tracker->encodeDiff($mergedDiff) : null,
+                    ':last_synced_at' => $now,
                     ':change_reason' => $changeReason,
                     ':id' => $idInt,
                 ]);
+
+                if ($seoChanged) {
+                    $fields = [
+                        'seo_url' => $seoUrl,
+                        'changed' => 1,
+                        'changed_fields' => $mergedDiff !== [] ? $tracker->encodeDiff($mergedDiff) : '',
+                        'last_synced_at' => $now,
+                    ];
+                    $fileDbWriter->writeWarengruppe(
+                        (string)($item['name'] ?? ''),
+                        (string)$idInt,
+                        $fields,
+                        ['seo_url'],
+                        ['changed', 'changed_fields', 'last_synced_at']
+                    );
+                }
                 $updated++;
             }
             $pdo->commit();

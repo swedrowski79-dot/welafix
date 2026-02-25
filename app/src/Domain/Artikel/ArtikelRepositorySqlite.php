@@ -3,11 +3,13 @@ declare(strict_types=1);
 
 namespace Welafix\Domain\Artikel;
 
+use Welafix\Domain\ChangeTracking\ChangeTracker;
 use PDO;
 
 final class ArtikelRepositorySqlite
 {
     private PDO $pdo;
+    private ChangeTracker $tracker;
     /** @var array<string, \PDOStatement> */
     private array $insertCache = [];
     /** @var array<string, \PDOStatement> */
@@ -16,6 +18,7 @@ final class ArtikelRepositorySqlite
     public function __construct(PDO $pdo)
     {
         $this->pdo = $pdo;
+        $this->tracker = new ChangeTracker();
     }
 
     public function ensureTable(): void
@@ -33,18 +36,26 @@ final class ArtikelRepositorySqlite
             seo_url TEXT,
             row_hash TEXT,
             last_seen_at TEXT,
+            last_synced_at TEXT,
             changed INTEGER DEFAULT 0,
+            changed_fields TEXT,
             change_reason TEXT
         )';
         $this->pdo->exec($sql);
     }
 
     /**
+     * @param array<int, string> $diffColumns
      * @return array<string, mixed>|null
      */
-    public function findByAfsArtikelId(string $afsArtikelId): ?array
+    public function findByAfsArtikelId(string $afsArtikelId, array $diffColumns = []): ?array
     {
-        $stmt = $this->pdo->prepare('SELECT row_hash, change_reason FROM artikel WHERE afs_artikel_id = :id LIMIT 1');
+        $select = ['row_hash', 'change_reason', 'changed', 'changed_fields', 'last_synced_at'];
+        foreach ($diffColumns as $col) {
+            $select[] = $this->quoteIdentifier($col);
+        }
+        $selectList = implode(', ', array_values(array_unique($select)));
+        $stmt = $this->pdo->prepare('SELECT ' . $selectList . ' FROM artikel WHERE afs_artikel_id = :id LIMIT 1');
         $stmt->bindValue(':id', $afsArtikelId, PDO::PARAM_STR);
         $stmt->execute();
         $row = $stmt->fetch(PDO::FETCH_ASSOC);
@@ -55,12 +66,14 @@ final class ArtikelRepositorySqlite
      * @param array<string, mixed> $data
      * @param array<string, mixed> $extraFields
      * @param array<int, string> $extraKeys
+     * @param array<int, string> $diffColumns
      * @return array{inserted:bool,updated:bool,unchanged:bool}
      */
-    public function upsertArtikel(array $data, string $seenAtIso, array $extraFields, array $extraKeys, string $rowHash): array
+    public function upsertArtikel(array $data, string $seenAtIso, array $extraFields, array $extraKeys, string $rowHash, array $diffColumns = []): array
     {
         $afsArtikelId = (string)$data['afs_artikel_id'];
-        $existing = $this->findByAfsArtikelId($afsArtikelId);
+        $existing = $this->findByAfsArtikelId($afsArtikelId, $diffColumns);
+        $diff = $this->tracker->buildDiff($existing, $extraFields, $diffColumns);
 
         if ($existing === null) {
             $columns = ['afs_artikel_id', 'afs_key', 'artikelnummer', 'name', 'warengruppe_id', 'price', 'stock', 'online'];
@@ -71,11 +84,15 @@ final class ArtikelRepositorySqlite
             }
             $columns[] = 'row_hash';
             $columns[] = 'last_seen_at';
+            $columns[] = 'last_synced_at';
             $columns[] = 'changed';
+            $columns[] = 'changed_fields';
             $columns[] = 'change_reason';
             $params[] = ':row_hash';
             $params[] = ':last_seen_at';
+            $params[] = ':last_synced_at';
             $params[] = ':changed';
+            $params[] = ':changed_fields';
             $params[] = ':change_reason';
 
             $stmt = $this->prepareInsert($extraKeys, $columns, $params);
@@ -92,21 +109,32 @@ final class ArtikelRepositorySqlite
             }
             $stmt->bindValue(':row_hash', $rowHash, PDO::PARAM_STR);
             $stmt->bindValue(':last_seen_at', $seenAtIso, PDO::PARAM_STR);
+            $stmt->bindValue(':last_synced_at', $seenAtIso, PDO::PARAM_STR);
             $stmt->bindValue(':changed', 1, PDO::PARAM_INT);
+            $stmt->bindValue(':changed_fields', $this->tracker->encodeDiff($diff), PDO::PARAM_STR);
             $stmt->bindValue(':change_reason', 'new', PDO::PARAM_STR);
             $stmt->execute();
-            return ['inserted' => true, 'updated' => false, 'unchanged' => false];
+            if ($diff !== []) {
+                $this->tracker->writeHistory($this->pdo, 'artikel', (string)$data['artikelnummer'], $seenAtIso, $diff, 'afs');
+            }
+            return ['inserted' => true, 'updated' => false, 'unchanged' => false, 'diff' => $diff];
         }
 
         $existingHash = (string)($existing['row_hash'] ?? '');
         if ($existingHash !== '' && $existingHash === $rowHash) {
             $stmt = $this->pdo->prepare(
-                'UPDATE artikel SET last_seen_at = :last_seen_at WHERE afs_artikel_id = :id'
+                'UPDATE artikel
+                 SET last_seen_at = :last_seen_at,
+                     last_synced_at = :last_synced_at,
+                     changed = 0,
+                     changed_fields = NULL
+                 WHERE afs_artikel_id = :id'
             );
             $stmt->bindValue(':last_seen_at', $seenAtIso, PDO::PARAM_STR);
+            $stmt->bindValue(':last_synced_at', $seenAtIso, PDO::PARAM_STR);
             $stmt->bindValue(':id', $afsArtikelId, PDO::PARAM_STR);
             $stmt->execute();
-            return ['inserted' => false, 'updated' => false, 'unchanged' => true];
+            return ['inserted' => false, 'updated' => false, 'unchanged' => true, 'diff' => []];
         }
 
         $changeReason = $this->mergeReasons((string)($existing['change_reason'] ?? ''), ['fields']);
@@ -125,7 +153,9 @@ final class ArtikelRepositorySqlite
         }
         $setParts[] = 'row_hash = :row_hash';
         $setParts[] = 'last_seen_at = :last_seen_at';
-        $setParts[] = 'changed = 1';
+        $setParts[] = 'last_synced_at = :last_synced_at';
+        $setParts[] = 'changed = :changed';
+        $setParts[] = 'changed_fields = :changed_fields';
         $setParts[] = 'change_reason = :change_reason';
 
         $stmt = $this->prepareUpdate($extraKeys, $setParts);
@@ -141,11 +171,21 @@ final class ArtikelRepositorySqlite
         }
         $stmt->bindValue(':row_hash', $rowHash, PDO::PARAM_STR);
         $stmt->bindValue(':last_seen_at', $seenAtIso, PDO::PARAM_STR);
+        $stmt->bindValue(':last_synced_at', $seenAtIso, PDO::PARAM_STR);
+        $stmt->bindValue(':changed', $diff !== [] ? 1 : 0, PDO::PARAM_INT);
+        if ($diff !== []) {
+            $stmt->bindValue(':changed_fields', $this->tracker->encodeDiff($diff), PDO::PARAM_STR);
+        } else {
+            $stmt->bindValue(':changed_fields', null, PDO::PARAM_NULL);
+        }
         $stmt->bindValue(':change_reason', $changeReason, PDO::PARAM_STR);
         $stmt->bindValue(':id', $afsArtikelId, PDO::PARAM_STR);
         $stmt->execute();
 
-        return ['inserted' => false, 'updated' => true, 'unchanged' => false];
+        if ($diff !== []) {
+            $this->tracker->writeHistory($this->pdo, 'artikel', (string)$data['artikelnummer'], $seenAtIso, $diff, 'afs');
+        }
+        return ['inserted' => false, 'updated' => true, 'unchanged' => false, 'diff' => $diff];
     }
 
     /**
@@ -166,6 +206,11 @@ final class ArtikelRepositorySqlite
             $items[$reason] = true;
         }
         return implode(',', array_keys($items));
+    }
+
+    public function encodeDiff(array $diff): string
+    {
+        return $this->tracker->encodeDiff($diff);
     }
 
     private function bindNullableInt(\PDOStatement $stmt, string $param, $value): void
