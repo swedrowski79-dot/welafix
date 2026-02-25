@@ -35,3 +35,4 @@ git push origin main
 echo.
 echo ✅ Fertig!
 pause
+gitupdate.bat
