@@ -30,6 +30,7 @@ final class ArtikelRepositorySqlite
             price REAL,
             stock INTEGER,
             online INTEGER,
+            seo_url TEXT,
             row_hash TEXT,
             last_seen_at TEXT,
             changed INTEGER DEFAULT 0,

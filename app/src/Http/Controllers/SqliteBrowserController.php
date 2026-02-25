@@ -59,7 +59,10 @@ final class SqliteBrowserController
 
             if ($name === 'artikel' || $name === 'warengruppe') {
                 $mapping = new MappingService();
-                $allowed = $mapping->getAllowedColumns($name === 'artikel' ? 'artikel' : 'warengruppe');
+                $allowed = array_values(array_unique(array_merge(
+                    $mapping->getAllowedColumns($name === 'artikel' ? 'artikel' : 'warengruppe'),
+                    ['seo_url']
+                )));
                 $allowedLookup = [];
                 foreach ($allowed as $col) {
                     $allowedLookup[strtolower($col)] = true;

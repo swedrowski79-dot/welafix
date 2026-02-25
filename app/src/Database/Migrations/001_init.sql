@@ -10,6 +10,7 @@ CREATE TABLE IF NOT EXISTS artikel (
   price REAL,
   stock INTEGER,
   online INTEGER,
+  seo_url TEXT,
   last_seen_at TEXT,
   changed INTEGER DEFAULT 0,
   change_reason TEXT
@@ -25,6 +26,7 @@ CREATE TABLE IF NOT EXISTS warengruppe (
   parent_id INTEGER,
   path TEXT,
   path_ids TEXT,
+  seo_url TEXT,
   last_seen_at TEXT,
   changed INTEGER DEFAULT 0,
   change_reason TEXT

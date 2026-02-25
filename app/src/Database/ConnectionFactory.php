@@ -3,6 +3,8 @@ declare(strict_types=1);
 
 namespace Welafix\Database;
 
+use DateTimeImmutable;
+use DateTimeZone;
 use PDO;
 use RuntimeException;
 use Welafix\Database\SqliteGuardedPdo;
@@ -17,7 +19,7 @@ final class ConnectionFactory
     {
         if ($this->sqlite) return $this->sqlite;
 
-        $path = getenv('SQLITE_PATH') ?: '';
+        $path = (string)env('SQLITE_PATH', '');
         if ($path === '') {
             throw new RuntimeException('SQLITE_PATH ist nicht gesetzt.');
         }
@@ -36,14 +38,16 @@ final class ConnectionFactory
     {
         if ($this->mssql) return $this->mssql;
 
-        $host = getenv('MSSQL_HOST') ?: 'localhost';
-        $port = getenv('MSSQL_PORT') ?: '1433';
-        $db   = getenv('MSSQL_DB') ?: '';
-        $user = getenv('MSSQL_USER') ?: '';
-        $pass = getenv('MSSQL_PASS') ?: '';
+        $host = trim((string)env('MSSQL_HOST', 'localhost'));
+        $port = trim((string)env('MSSQL_PORT', '1433'));
+        $db   = trim((string)env('MSSQL_DB', ''));
+        $user = trim((string)env('MSSQL_USER', ''));
+        $pass = trim((string)env('MSSQL_PASS', ''));
 
-        $encrypt = (getenv('MSSQL_ENCRYPT') === 'true') ? 'yes' : 'no';
-        $trust   = (getenv('MSSQL_TRUST_CERT') === 'true') ? 'yes' : 'no';
+        $encrypt = (strtolower(trim((string)env('MSSQL_ENCRYPT', ''))) === 'true') ? 'yes' : 'no';
+        $trust   = (strtolower(trim((string)env('MSSQL_TRUST_CERT', ''))) === 'true') ? 'yes' : 'no';
+
+        $this->logMssqlConfigOnce($host, $port, $db, $user);
 
         $dsn = "sqlsrv:Server={$host},{$port};Database={$db};Encrypt={$encrypt};TrustServerCertificate={$trust}";
 
@@ -63,7 +67,7 @@ final class ConnectionFactory
     {
         if ($this->media) return $this->media;
 
-        $path = getenv('MEDIA_DB_PATH') ?: (__DIR__ . '/../../storage/media.db');
+        $path = (string)env('MEDIA_DB_PATH', __DIR__ . '/../../storage/media.db');
         $dir = dirname($path);
         if (!is_dir($dir)) {
             mkdir($dir, 0777, true);
@@ -96,6 +100,7 @@ final class ConnectionFactory
             'price' => 'REAL',
             'stock' => 'INTEGER',
             'online' => 'INTEGER',
+            'seo_url' => 'TEXT',
             'last_seen_at' => 'TEXT',
             'changed' => 'INTEGER DEFAULT 0',
             'change_reason' => 'TEXT',
@@ -109,6 +114,7 @@ final class ConnectionFactory
             'parent_id' => 'TEXT',
             'path' => 'TEXT',
             'path_ids' => 'TEXT',
+            'seo_url' => 'TEXT',
             'last_seen_at' => 'TEXT',
             'changed' => 'INTEGER DEFAULT 0',
             'change_reason' => 'TEXT',
@@ -229,6 +235,24 @@ final class ConnectionFactory
             )'
         );
         $pdo->exec('CREATE INDEX IF NOT EXISTS idx_document_files_document_id ON document_files(document_id)');
+    }
+
+    private function logMssqlConfigOnce(string $host, string $port, string $db, string $user): void
+    {
+        if (!is_dev_env()) {
+            return;
+        }
+
+        static $logged = false;
+        if ($logged) {
+            return;
+        }
+        $logged = true;
+
+        $timestamp = (new DateTimeImmutable('now', new DateTimeZone('UTC')))->format(DATE_ATOM);
+        $line = "[{$timestamp}] mssql_debug host={$host} port={$port} db={$db} user={$user}\n";
+        $path = __DIR__ . '/../../logs/app.log';
+        @file_put_contents($path, $line, FILE_APPEND);
     }
 
 }

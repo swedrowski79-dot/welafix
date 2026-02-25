@@ -19,3 +19,4 @@ spl_autoload_register(function (string $class): void {
 });
 
 require_once __DIR__ . '/../Seo/xt_seo.php';
+require_once __DIR__ . '/helpers.php';

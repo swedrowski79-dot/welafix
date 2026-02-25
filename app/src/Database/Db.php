@@ -30,7 +30,7 @@ final class Db
         $driver = $pdo->getAttribute(PDO::ATTR_DRIVER_NAME);
         if ($driver !== 'sqlsrv') {
             $componentLabel = $component !== '' ? $component : 'unbekannt';
-            $sqlitePath = getenv('SQLITE_PATH') ?: '';
+            $sqlitePath = (string)env('SQLITE_PATH', '');
             $message = "Komponente {$componentLabel} erwartet MSSQL (sqlsrv), bekam aber DRIVER={$driver}.";
             if ($sqlitePath !== '') {
                 $message .= " SQLITE_PATH={$sqlitePath}";

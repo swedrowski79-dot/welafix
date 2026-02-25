@@ -34,8 +34,8 @@ final class ApiController
             $stmt = $pdo->query('SELECT DB_NAME() AS database_name, @@SERVERNAME AS server_name');
             $row = $stmt->fetch(PDO::FETCH_ASSOC) ?: [];
 
-            $server = (string)($row['server_name'] ?? (getenv('MSSQL_HOST') ?: ''));
-            $database = (string)($row['database_name'] ?? (getenv('MSSQL_DB') ?: ''));
+            $server = (string)($row['server_name'] ?? env('MSSQL_HOST', ''));
+            $database = (string)($row['database_name'] ?? env('MSSQL_DB', ''));
 
             $this->jsonResponse([
                 'ok' => true,
@@ -55,7 +55,7 @@ final class ApiController
 
     public function testSqlite(): void
     {
-        $path = getenv('SQLITE_PATH') ?: '';
+        $path = (string)env('SQLITE_PATH', '');
 
         try {
             if ($path === '') {
@@ -213,6 +213,7 @@ final class ApiController
             $stmt->execute();
             $rows = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
             $rows = $mapping->filterRows($rows, $allowed);
+            $this->logSeoUrlKeysOnce('artikel', $rows);
             $this->jsonResponse([
                 'ok' => true,
                 'items' => $rows,
@@ -249,6 +250,7 @@ final class ApiController
             $stmt->execute();
             $rows = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
             $rows = $mapping->filterRows($rows, $allowed);
+            $this->logSeoUrlKeysOnce('warengruppe', $rows);
             $this->jsonResponse([
                 'ok' => true,
                 'items' => $rows,
@@ -273,5 +275,41 @@ final class ApiController
         http_response_code($status);
         header('Content-Type: application/json; charset=utf-8');
         echo json_encode($payload, JSON_PRETTY_PRINT);
+    }
+
+    /**
+     * @param array<int, array<string, mixed>> $rows
+     */
+    private function logSeoUrlKeysOnce(string $type, array $rows): void
+    {
+        if (!$this->isDev()) {
+            return;
+        }
+
+        static $logged = [
+            'artikel' => false,
+            'warengruppe' => false,
+        ];
+
+        if (!isset($logged[$type]) || $logged[$type]) {
+            return;
+        }
+
+        if ($rows === []) {
+            return;
+        }
+
+        $keys = array_keys($rows[0]);
+        $timestamp = (new \DateTimeImmutable('now', new \DateTimeZone('UTC')))->format(DATE_ATOM);
+        $line = "[{$timestamp}] api_debug {$type} keys: " . implode(',', $keys) . "\n";
+        $path = __DIR__ . '/../../../logs/app.log';
+        @file_put_contents($path, $line, FILE_APPEND);
+
+        $logged[$type] = true;
+    }
+
+    private function isDev(): bool
+    {
+        return is_dev_env();
     }
 }

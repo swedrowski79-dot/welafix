@@ -21,8 +21,8 @@ final class TemplateExportService
     {
         $this->renderer = $renderer ?? new PlaceholderRenderer();
         $this->logger = $logger ?? new TemplateVarLogger();
-        $this->outputDir = getenv('TEMPLATE_OUTPUT_DIR') ?: (__DIR__ . '/../../../storage/exports');
-        $this->templateDir = getenv('TEMPLATE_SOURCE_DIR') ?: (__DIR__ . '/../../../storage/templates');
+        $this->outputDir = (string)env('TEMPLATE_OUTPUT_DIR', __DIR__ . '/../../../storage/exports');
+        $this->templateDir = (string)env('TEMPLATE_SOURCE_DIR', __DIR__ . '/../../../storage/templates');
     }
 
     public function exportArtikelTemplates(): void

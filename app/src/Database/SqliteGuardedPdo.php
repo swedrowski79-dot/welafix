@@ -67,7 +67,7 @@ final class SqliteGuardedPdo extends PDO
 
         if ($mssqlHit) {
             $driver = $this->getAttribute(PDO::ATTR_DRIVER_NAME);
-            $sqlitePath = getenv('SQLITE_PATH') ?: '';
+            $sqlitePath = (string)env('SQLITE_PATH', '');
             $callsite = $this->findCallsite();
             $component = $this->component !== '' ? $this->component : 'unbekannt';
             $message = 'MSSQL SQL auf SQLite ist nicht erlaubt.'
