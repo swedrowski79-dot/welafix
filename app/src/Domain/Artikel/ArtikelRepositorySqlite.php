@@ -43,7 +43,7 @@ final class ArtikelRepositorySqlite
      */
     public function findByAfsArtikelId(string $afsArtikelId): ?array
     {
-        $stmt = $this->pdo->prepare('SELECT * FROM artikel WHERE afs_artikel_id = :id LIMIT 1');
+        $stmt = $this->pdo->prepare('SELECT row_hash, change_reason FROM artikel WHERE afs_artikel_id = :id LIMIT 1');
         $stmt->bindValue(':id', $afsArtikelId, PDO::PARAM_STR);
         $stmt->execute();
         $row = $stmt->fetch(PDO::FETCH_ASSOC);

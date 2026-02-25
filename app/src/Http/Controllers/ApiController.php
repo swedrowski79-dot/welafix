@@ -7,6 +7,7 @@ use DateTimeImmutable;
 use DateTimeZone;
 use PDO;
 use RuntimeException;
+use Welafix\Config\MappingLoader;
 use Welafix\Database\ConnectionFactory;
 use Welafix\Database\Db;
 use Welafix\Domain\Artikel\ArtikelSyncService;
@@ -188,6 +189,77 @@ final class ApiController
             'assets' => $assets,
             'links' => $links,
         ]);
+    }
+
+    public function artikelList(): void
+    {
+        $limit = isset($_GET['limit']) ? (int)$_GET['limit'] : 50;
+        $limit = max(1, min(200, $limit));
+        $offset = isset($_GET['offset']) ? (int)$_GET['offset'] : 0;
+        $offset = max(0, $offset);
+
+        try {
+            $loader = new MappingLoader();
+            $allowed = $loader->getAllowedColumns('artikel');
+            $pdo = $this->factory->sqlite();
+            $selectList = implode(', ', array_map([$this, 'quoteIdentifier'], $allowed));
+            $sql = 'SELECT ' . $selectList . ' FROM artikel LIMIT :limit OFFSET :offset';
+            $stmt = $pdo->prepare($sql);
+            $stmt->bindValue(':limit', $limit, PDO::PARAM_INT);
+            $stmt->bindValue(':offset', $offset, PDO::PARAM_INT);
+            $stmt->execute();
+            $rows = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+            $rows = $loader->filterRows($rows, $allowed);
+            $this->jsonResponse([
+                'ok' => true,
+                'items' => $rows,
+            ]);
+        } catch (\Throwable $e) {
+            $this->jsonResponse([
+                'ok' => false,
+                'error' => $e->getMessage(),
+                'sql' => null,
+                'params' => null,
+            ], 500);
+        }
+    }
+
+    public function warengruppeList(): void
+    {
+        $limit = isset($_GET['limit']) ? (int)$_GET['limit'] : 100;
+        $limit = max(1, min(500, $limit));
+        $offset = isset($_GET['offset']) ? (int)$_GET['offset'] : 0;
+        $offset = max(0, $offset);
+
+        try {
+            $loader = new MappingLoader();
+            $allowed = $loader->getAllowedColumns('warengruppe');
+            $pdo = $this->factory->sqlite();
+            $selectList = implode(', ', array_map([$this, 'quoteIdentifier'], $allowed));
+            $sql = 'SELECT ' . $selectList . ' FROM warengruppe LIMIT :limit OFFSET :offset';
+            $stmt = $pdo->prepare($sql);
+            $stmt->bindValue(':limit', $limit, PDO::PARAM_INT);
+            $stmt->bindValue(':offset', $offset, PDO::PARAM_INT);
+            $stmt->execute();
+            $rows = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+            $rows = $loader->filterRows($rows, $allowed);
+            $this->jsonResponse([
+                'ok' => true,
+                'items' => $rows,
+            ]);
+        } catch (\Throwable $e) {
+            $this->jsonResponse([
+                'ok' => false,
+                'error' => $e->getMessage(),
+                'sql' => null,
+                'params' => null,
+            ], 500);
+        }
+    }
+
+    private function quoteIdentifier(string $name): string
+    {
+        return '"' . str_replace('"', '""', $name) . '"';
     }
 
     private function jsonResponse(array $payload, int $status = 200): void

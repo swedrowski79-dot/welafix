@@ -8,7 +8,16 @@ use RuntimeException;
 
 final class SchemaSyncService
 {
-    public function ensureSqliteColumnsMatchMssql(PDO $mssql, PDO $sqlite, string $mssqlTable, string $sqliteTable): void
+    /**
+     * @param array<int, string> $allowedColumns
+     */
+    public function ensureSqliteColumnsMatchMssql(
+        PDO $mssql,
+        PDO $sqlite,
+        string $mssqlTable,
+        string $sqliteTable,
+        array $allowedColumns = []
+    ): void
     {
         $mssqlCols = $this->fetchMssqlColumns($mssql, $mssqlTable);
         if ($mssqlCols === []) {
@@ -21,8 +30,19 @@ final class SchemaSyncService
             $sqliteLookup[strtolower($col)] = true;
         }
 
+        $allowedLookup = null;
+        if ($allowedColumns !== []) {
+            $allowedLookup = [];
+            foreach ($allowedColumns as $col) {
+                $allowedLookup[strtolower($col)] = true;
+            }
+        }
+
         $added = [];
         foreach ($mssqlCols as $col) {
+            if ($allowedLookup !== null && !isset($allowedLookup[strtolower($col)])) {
+                continue;
+            }
             if (!isset($sqliteLookup[strtolower($col)])) {
                 $sqlite->exec(
                     'ALTER TABLE ' . $this->quoteIdentifier($sqliteTable) .

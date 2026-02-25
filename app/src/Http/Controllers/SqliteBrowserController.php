@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace Welafix\Http\Controllers;
 
 use PDO;
+use Welafix\Config\MappingLoader;
 use Welafix\Database\ConnectionFactory;
 
 final class SqliteBrowserController
@@ -56,7 +57,34 @@ final class SqliteBrowserController
                 return;
             }
 
+            if ($name === 'artikel' || $name === 'warengruppe') {
+                $mappingLoader = new MappingLoader();
+                $allowed = $mappingLoader->getAllowedColumns($name === 'artikel' ? 'artikel' : 'warengruppe');
+                $allowedLookup = [];
+                foreach ($allowed as $col) {
+                    $allowedLookup[strtolower($col)] = true;
+                }
+                $columns = array_values(array_filter(
+                    $columns,
+                    static fn(string $col): bool => isset($allowedLookup[strtolower($col)])
+                ));
+                if ($columns === []) {
+                    $this->jsonResponse(['error' => 'Keine freigegebenen Spalten gefunden.', 'sql' => null, 'params' => null], 400);
+                    return;
+                }
+            }
+
             $textColumns = $this->getTextColumns($tableInfo);
+            if ($columns !== []) {
+                $colLookup = [];
+                foreach ($columns as $col) {
+                    $colLookup[strtolower($col)] = true;
+                }
+                $textColumns = array_values(array_filter(
+                    $textColumns,
+                    static fn(string $col): bool => isset($colLookup[strtolower($col)])
+                ));
+            }
 
             $q = isset($_GET['q']) ? trim((string)$_GET['q']) : '';
             $page = isset($_GET['page']) ? (int)$_GET['page'] : 1;

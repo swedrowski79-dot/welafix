@@ -84,6 +84,16 @@ final class App
             return;
         }
 
+        if ($path === '/api/artikel') {
+            (new ApiController($factory))->artikelList();
+            return;
+        }
+
+        if ($path === '/api/warengruppe') {
+            (new ApiController($factory))->warengruppeList();
+            return;
+        }
+
         if ($path === '/api/sync-state') {
             (new ApiController($factory))->syncState();
             return;

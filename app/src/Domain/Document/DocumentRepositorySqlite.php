@@ -9,6 +9,39 @@ use RuntimeException;
 final class DocumentRepositorySqlite
 {
     private PDO $pdo;
+    private const DOCUMENT_COLUMNS = [
+        'id',
+        'source',
+        'source_id',
+        'doc_type',
+        'doc_no',
+        'doc_date',
+        'customer_no',
+        'total_gross',
+        'currency',
+        'updated_at',
+        'synced_at',
+    ];
+    private const ITEM_COLUMNS = [
+        'id',
+        'document_id',
+        'line_no',
+        'article_no',
+        'title',
+        'qty',
+        'unit_price',
+        'total',
+        'vat',
+    ];
+    private const FILE_COLUMNS = [
+        'id',
+        'document_id',
+        'file_name',
+        'mime_type',
+        'storage_path',
+        'checksum',
+        'created_at',
+    ];
 
     public function __construct(PDO $pdo)
     {
@@ -119,7 +152,9 @@ final class DocumentRepositorySqlite
     public function getLatestDocuments(int $limit = 20): array
     {
         $limit = max(1, min(200, $limit));
-        $stmt = $this->pdo->query('SELECT * FROM documents ORDER BY id DESC LIMIT ' . $limit);
+        $stmt = $this->pdo->query(
+            'SELECT ' . implode(', ', self::DOCUMENT_COLUMNS) . ' FROM documents ORDER BY id DESC LIMIT ' . $limit
+        );
         return $stmt->fetchAll(PDO::FETCH_ASSOC);
     }
 
@@ -128,16 +163,22 @@ final class DocumentRepositorySqlite
      */
     public function getDocumentWithItems(int $id): ?array
     {
-        $stmt = $this->pdo->prepare('SELECT * FROM documents WHERE id = :id LIMIT 1');
+        $stmt = $this->pdo->prepare(
+            'SELECT ' . implode(', ', self::DOCUMENT_COLUMNS) . ' FROM documents WHERE id = :id LIMIT 1'
+        );
         $stmt->execute([':id' => $id]);
         $doc = $stmt->fetch(PDO::FETCH_ASSOC);
         if (!$doc) {
             return null;
         }
 
-        $itemsStmt = $this->pdo->prepare('SELECT * FROM document_items WHERE document_id = :id ORDER BY line_no ASC, id ASC');
+        $itemsStmt = $this->pdo->prepare(
+            'SELECT ' . implode(', ', self::ITEM_COLUMNS) . ' FROM document_items WHERE document_id = :id ORDER BY line_no ASC, id ASC'
+        );
         $itemsStmt->execute([':id' => $id]);
-        $filesStmt = $this->pdo->prepare('SELECT * FROM document_files WHERE document_id = :id ORDER BY id ASC');
+        $filesStmt = $this->pdo->prepare(
+            'SELECT ' . implode(', ', self::FILE_COLUMNS) . ' FROM document_files WHERE document_id = :id ORDER BY id ASC'
+        );
         $filesStmt->execute([':id' => $id]);
 
         $doc['items'] = $itemsStmt->fetchAll(PDO::FETCH_ASSOC);

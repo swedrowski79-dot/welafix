@@ -5,6 +5,7 @@ namespace Welafix\Domain\Export;
 
 use PDO;
 use RuntimeException;
+use Welafix\Config\MappingLoader;
 use Welafix\Database\Db;
 use Welafix\Logger\TemplateVarLogger;
 use Welafix\Template\PlaceholderRenderer;
@@ -33,8 +34,37 @@ final class TemplateExportService
             return;
         }
 
+        $mappingLoader = new MappingLoader();
+        $allowed = $mappingLoader->getAllowedColumns('artikel');
+        $desired = array_values(array_unique(array_merge($allowed, [
+            'afs_artikel_id',
+            'artikelnummer',
+            'name',
+            'warengruppe_id',
+        ])));
+        $existingCols = $this->fetchSqliteColumns($pdo, 'artikel');
+        $existingLookup = [];
+        foreach ($existingCols as $col) {
+            $existingLookup[strtolower($col)] = $col;
+        }
+        $selectCols = [];
+        foreach ($desired as $col) {
+            $key = strtolower($col);
+            if (isset($existingLookup[$key])) {
+                $selectCols[] = 'a.' . $this->quoteIdentifier($existingLookup[$key]);
+            }
+        }
+        if ($selectCols === []) {
+            $selectCols = [
+                'a.' . $this->quoteIdentifier('afs_artikel_id'),
+                'a.' . $this->quoteIdentifier('artikelnummer'),
+                'a.' . $this->quoteIdentifier('name'),
+                'a.' . $this->quoteIdentifier('warengruppe_id'),
+            ];
+        }
+        $selectCols[] = 'w.path AS warengruppe_path';
         $rows = $pdo->query(
-            'SELECT a.*, w.path AS warengruppe_path
+            'SELECT ' . implode(', ', $selectCols) . '
              FROM artikel a
              LEFT JOIN warengruppe w ON w.afs_wg_id = a.warengruppe_id'
         )?->fetchAll(PDO::FETCH_ASSOC) ?: [];

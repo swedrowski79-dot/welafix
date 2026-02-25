@@ -11,31 +11,18 @@ use Welafix\Config\MappingLoader;
 use Welafix\Database\ConnectionFactory;
 use Welafix\Database\Db;
 use Welafix\Database\SchemaSyncService;
-use Welafix\Domain\FileDb\FileDbCache;
+use Welafix\Database\SchemaHelper;
 
 final class WarengruppeSyncService
 {
     private ConnectionFactory $factory;
     private ?string $lastSql = null;
     private ?array $lastContext = null;
-    private FileDbCache $fileDbCache;
     private SchemaSyncService $schemaSync;
-    private const BASE_COLUMNS = [
-        'afs_wg_id',
-        'name',
-        'parent_id',
-        'path',
-        'path_ids',
-        'last_seen_at',
-        'changed',
-        'change_reason',
-        'id',
-    ];
 
     public function __construct(ConnectionFactory $factory)
     {
         $this->factory = $factory;
-        $this->fileDbCache = new FileDbCache();
         $this->schemaSync = new SchemaSyncService();
     }
 
@@ -51,12 +38,14 @@ final class WarengruppeSyncService
         }
 
         $mapping = $mappings['warengruppe'];
+        $selectFields = $this->getSelectFields($mapping);
+        $mapping['select'] = $selectFields;
 
         $mssql = Db::guardMssql(Db::mssql(), __METHOD__);
         $sqlite = Db::guardSqlite(Db::sqlite(), __METHOD__);
         $mssqlRepo = new WarengruppeRepositoryMssql($mssql);
         $sqliteRepo = new WarengruppeRepositorySqlite($sqlite);
-        $this->schemaSync->ensureSqliteColumnsMatchMssql($mssql, $sqlite, 'dbo.Warengruppe', 'warengruppe');
+        $this->schemaSync->ensureSqliteColumnsMatchMssql($mssql, $sqlite, 'dbo.Warengruppe', 'warengruppe', $selectFields);
 
         try {
             $rows = $mssqlRepo->fetchAllByMapping($mapping);
@@ -87,25 +76,23 @@ final class WarengruppeSyncService
                 $preparedRows[] = ['error' => 'missing_key', 'row' => $row];
                 continue;
             }
-            $extras = $this->fileDbCache->getMerged('Warengruppen', $afsWgId);
-            $normalizedExtras = $this->normalizeExtras($extras);
-            $normalizedExtras = $this->filterBaseColumns($normalizedExtras, self::BASE_COLUMNS);
-            foreach (array_keys($normalizedExtras) as $field) {
-                if (!isset($existingColumns[$field])) {
-                    $newColumns[$field] = true;
-                }
-            }
             $preparedRows[] = [
                 'row' => $row,
-                'extras' => $normalizedExtras,
+                'extras' => $this->extractRawFields($row, $this->getRawFieldNames($selectFields)),
             ];
         }
 
+        foreach ($this->buildDesiredColumns($selectFields) as $column => $type) {
+            if (!$this->columnExists($existingColumns, $column)) {
+                $newColumns[$column] = $type;
+            }
+        }
+
         if ($newColumns !== []) {
-            foreach (array_keys($newColumns) as $column) {
-                if (!isset($existingColumns[$column])) {
-                    $pdo->exec('ALTER TABLE warengruppe ADD COLUMN ' . $this->quoteIdentifier($column) . ' TEXT');
-                    $existingColumns[$column] = true;
+            foreach ($newColumns as $column => $type) {
+                if (!SchemaHelper::columnExists($pdo, 'warengruppe', $column)) {
+                    $pdo->exec('ALTER TABLE warengruppe ADD COLUMN ' . $this->quoteIdentifier($column) . ' ' . $type);
+                    $existingColumns[strtolower($column)] = $column;
                 }
             }
         }
@@ -123,7 +110,7 @@ final class WarengruppeSyncService
                     $name = $this->requireStringField($row, 'Bezeichnung');
                     $parentId = $this->optionalParentId($row['Anhang'] ?? null);
 
-                    $extras = $prepared['extras'];
+                    $extras = $this->fillMissingExtras($prepared['extras'], $this->getRawFieldNames($selectFields));
 
                     $result = $sqliteRepo->upsert($afsWgId, $name, $parentId, $extras, $seenAt);
                     if ($result['inserted']) $stats['inserted']++;
@@ -310,67 +297,81 @@ final class WarengruppeSyncService
         return $columns;
     }
 
-    /**
-     * @param array<string, string> $extras
-     * @return array<string, string>
-     */
-    private function normalizeExtras(array $extras): array
+    private function quoteIdentifier(string $name): string
     {
-        $normalized = [];
-        foreach ($extras as $field => $value) {
-            $key = $this->normalizeFieldName($field);
-            if ($key === '') {
-                continue;
-            }
-            $normalized[$key] = $value;
-        }
-        if ($normalized !== []) {
-            ksort($normalized, SORT_STRING);
-        }
-        return $normalized;
+        return '"' . str_replace('"', '""', $name) . '"';
     }
 
     /**
-     * @param array<string, string> $extras
-     * @param array<int, string> $baseColumns
-     * @return array<string, string>
+     * @param array<string, mixed> $mapping
+     * @return array<int, string>
      */
-    private function filterBaseColumns(array $extras, array $baseColumns): array
+    private function getSelectFields(array $mapping): array
     {
-        if ($extras === []) {
-            return $extras;
+        $loader = new MappingLoader();
+        return $loader->getAllowedColumns('warengruppe');
+    }
+
+    /**
+     * @param array<int, string> $selectFields
+     * @return array<int, string>
+     */
+    private function getRawFieldNames(array $selectFields): array
+    {
+        return $selectFields;
+    }
+
+    /**
+     * @param array<string, mixed> $row
+     * @param array<int, string> $rawFieldNames
+     * @return array<string, mixed>
+     */
+    private function extractRawFields(array $row, array $rawFieldNames): array
+    {
+        $raw = [];
+        foreach ($rawFieldNames as $field) {
+            $raw[$field] = $row[$field] ?? null;
         }
-        $base = array_fill_keys($baseColumns, true);
-        foreach (array_keys($extras) as $key) {
-            if (isset($base[$key])) {
-                unset($extras[$key]);
+        return $raw;
+    }
+
+    /**
+     * @param array<string, mixed> $extras
+     * @param array<int, string> $extraKeys
+     * @return array<string, mixed>
+     */
+    private function fillMissingExtras(array $extras, array $extraKeys): array
+    {
+        foreach ($extraKeys as $key) {
+            if (!array_key_exists($key, $extras)) {
+                $extras[$key] = null;
             }
         }
         return $extras;
     }
 
-    private function normalizeFieldName(string $field): string
+    /**
+     * @return array<string, string>
+     */
+    private function buildDesiredColumns(array $selectFields): array
     {
-        $field = strtolower(trim($field));
-        if ($field === '') {
-            return '';
-        }
-        $replacements = [
-            'ä' => 'ae',
-            'ö' => 'oe',
-            'ü' => 'ue',
-            'ß' => 'ss',
+        $columns = [
+            'afs_wg_id' => 'INTEGER',
+            'name' => 'TEXT',
+            'parent_id' => 'INTEGER',
+            'path' => 'TEXT',
+            'path_ids' => 'TEXT',
+            'last_seen_at' => 'TEXT',
+            'changed' => 'INTEGER',
+            'change_reason' => 'TEXT',
         ];
-        $field = strtr($field, $replacements);
-        $field = preg_replace('/\\s+/', '_', $field) ?? $field;
-        $field = preg_replace('/[^a-z0-9_]/', '', $field) ?? $field;
-        $field = trim($field, '_');
-        return $field;
-    }
 
-    private function quoteIdentifier(string $name): string
-    {
-        return '"' . str_replace('"', '""', $name) . '"';
+        foreach ($selectFields as $field) {
+            if (!isset($columns[$field])) {
+                $columns[$field] = 'TEXT';
+            }
+        }
+        return $columns;
     }
 
     private function log(string $message): void
