@@ -9,6 +9,7 @@ use PDO;
 use RuntimeException;
 use Welafix\Database\ConnectionFactory;
 use Welafix\Domain\Artikel\ArtikelSyncService;
+use Welafix\Domain\Document\DocumentRepositorySqlite;
 
 final class ApiController
 {
@@ -93,6 +94,85 @@ final class ApiController
         $this->jsonResponse([
             'ok' => true,
             'state' => $state,
+        ]);
+    }
+
+    public function documentsList(): void
+    {
+        $limit = isset($_GET['limit']) ? (int)$_GET['limit'] : 20;
+        $repo = new DocumentRepositorySqlite($this->factory->sqlite());
+        $items = $repo->getLatestDocuments($limit);
+        $this->jsonResponse([
+            'ok' => true,
+            'items' => $items,
+        ]);
+    }
+
+    public function documentDetail(int $id): void
+    {
+        $repo = new DocumentRepositorySqlite($this->factory->sqlite());
+        $doc = $repo->getDocumentWithItems($id);
+        if ($doc === null) {
+            $this->jsonResponse([
+                'ok' => false,
+                'error' => 'Dokument nicht gefunden.',
+            ], 404);
+            return;
+        }
+        $this->jsonResponse([
+            'ok' => true,
+            'document' => $doc,
+        ]);
+    }
+
+    public function mediaList(): void
+    {
+        $entityType = isset($_GET['entity_type']) ? trim((string)$_GET['entity_type']) : '';
+        $entityId = isset($_GET['entity_id']) ? trim((string)$_GET['entity_id']) : '';
+
+        if ($entityType === '' || $entityId === '') {
+            $this->jsonResponse([
+                'ok' => false,
+                'error' => 'entity_type und entity_id sind erforderlich.',
+            ], 400);
+            return;
+        }
+
+        $pdo = $this->factory->media();
+        $stmt = $pdo->prepare(
+            'SELECT ma.id, ma.source, ma.source_key, ma.asset_type, ma.filename, ma.mime_type, ma.storage_path,
+                    ma.checksum, ma.size_bytes, ma.updated_at, ma.created_at, ml.field_name
+             FROM media_links ml
+             INNER JOIN media_assets ma ON ma.id = ml.asset_id
+             WHERE ml.entity_type = :entity_type AND ml.entity_id = :entity_id
+             ORDER BY ma.id ASC'
+        );
+        $stmt->execute([
+            ':entity_type' => $entityType,
+            ':entity_id' => $entityId,
+        ]);
+        $items = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+
+        $this->jsonResponse([
+            'ok' => true,
+            'items' => $items,
+        ]);
+    }
+
+    public function mediaStats(): void
+    {
+        $pdo = $this->factory->media();
+
+        $assetStmt = $pdo->query('SELECT asset_type, COUNT(*) AS count FROM media_assets GROUP BY asset_type');
+        $assets = $assetStmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+
+        $linkStmt = $pdo->query('SELECT entity_type, COUNT(*) AS count FROM media_links GROUP BY entity_type');
+        $links = $linkStmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+
+        $this->jsonResponse([
+            'ok' => true,
+            'assets' => $assets,
+            'links' => $links,
         ]);
     }
 

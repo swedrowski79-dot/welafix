@@ -13,9 +13,9 @@ services:
       - ./storage:/var/www/html/storage
       - ./logs:/var/www/html/logs
       # Optional: Host-Verzeichnisse für Bilder/Dokumente einbinden (anpassen)
-      - C:\Welafix_old\AFS\Webshop\Photos:/var/www/pictures:ro
-      - C:\Welafix_old\AFS\Webshop\Dokumente:/var/www/documents:ro
-      - c:\Welafix_old\AFS\Webshop\data:/var/www/data:ro
+      - C:\Welafix_old\AFS\Webshop\Photos:/var/www/html/storage/pictures:ro
+      - C:\Welafix_old\AFS\Webshop\Dokumente:/var/www/html/storage/documents:ro
+      - c:\Welafix_old\AFS\Webshop\data:/var/www/html/storage/data:ro
     environment:
       APP_ENV: "local"
       TZ: "Europe/Berlin"

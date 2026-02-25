@@ -27,4 +27,13 @@ final class DashboardController
 
         require $layout;
     }
+
+    public function sqliteBrowser(): void
+    {
+        $view = __DIR__ . '/../Views/sqlite_browser.php';
+        $layout = __DIR__ . '/../Views/layout.php';
+        $data = [];
+
+        require $layout;
+    }
 }

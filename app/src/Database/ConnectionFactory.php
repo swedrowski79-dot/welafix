@@ -10,6 +10,7 @@ final class ConnectionFactory
 {
     private ?PDO $sqlite = null;
     private ?PDO $mssql = null;
+    private ?PDO $media = null;
 
     public function sqlite(): PDO
     {
@@ -54,6 +55,22 @@ final class ConnectionFactory
         return $pdo;
     }
 
+    public function media(): PDO
+    {
+        if ($this->media) return $this->media;
+
+        $path = getenv('MEDIA_DB_PATH') ?: (__DIR__ . '/../../storage/media.db');
+        $dir = dirname($path);
+        if (!is_dir($dir)) {
+            mkdir($dir, 0777, true);
+        }
+
+        $pdo = new PDO('sqlite:' . $path);
+        $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+        $this->media = $pdo;
+        return $pdo;
+    }
+
     public function ensureSqliteMigrated(): void
     {
         $pdo = $this->sqlite();
@@ -70,6 +87,7 @@ final class ConnectionFactory
 
         $this->ensureColumns($pdo, 'artikel', [
             'afs_key' => 'TEXT',
+            'afs_artikel_id' => 'TEXT',
             'warengruppe_id' => 'TEXT',
             'price' => 'REAL',
             'stock' => 'INTEGER',
@@ -77,7 +95,9 @@ final class ConnectionFactory
             'last_seen_at' => 'TEXT',
             'changed' => 'INTEGER DEFAULT 0',
             'change_reason' => 'TEXT',
+            'row_hash' => 'TEXT',
         ]);
+        $pdo->exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_artikel_afs_artikel_id ON artikel(afs_artikel_id)');
 
         $this->ensureColumns($pdo, 'warengruppe', [
             'afs_wg_id' => 'TEXT',
@@ -91,6 +111,44 @@ final class ConnectionFactory
         ]);
 
         $this->ensureDocumentSchema($pdo);
+    }
+
+    public function ensureMediaMigrated(): void
+    {
+        $pdo = $this->media();
+
+        $pdo->exec(
+            'CREATE TABLE IF NOT EXISTS media_assets (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                source TEXT NOT NULL,
+                source_key TEXT NOT NULL,
+                asset_type TEXT NOT NULL,
+                filename TEXT NULL,
+                mime_type TEXT NULL,
+                storage_path TEXT NOT NULL,
+                checksum TEXT NULL,
+                size_bytes INTEGER NULL,
+                updated_at TEXT NULL,
+                created_at TEXT NOT NULL,
+                UNIQUE(source, source_key)
+            )'
+        );
+
+        $pdo->exec(
+            'CREATE TABLE IF NOT EXISTS media_links (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                asset_id INTEGER NOT NULL,
+                entity_type TEXT NOT NULL,
+                entity_id TEXT NOT NULL,
+                field_name TEXT NULL,
+                FOREIGN KEY(asset_id) REFERENCES media_assets(id) ON DELETE CASCADE
+            )'
+        );
+
+        $pdo->exec('CREATE INDEX IF NOT EXISTS idx_media_links_entity ON media_links(entity_type, entity_id)');
+        $pdo->exec('CREATE INDEX IF NOT EXISTS idx_media_assets_type ON media_assets(asset_type)');
+        $pdo->exec('CREATE INDEX IF NOT EXISTS idx_media_assets_checksum ON media_assets(checksum)');
+        $pdo->exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_media_links_unique ON media_links(asset_id, entity_type, entity_id, field_name)');
     }
 
     /**
@@ -165,4 +223,5 @@ final class ConnectionFactory
         );
         $pdo->exec('CREATE INDEX IF NOT EXISTS idx_document_files_document_id ON document_files(document_id)');
     }
+
 }

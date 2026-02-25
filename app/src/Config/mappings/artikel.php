@@ -14,7 +14,7 @@ return [
     'where' => "Mandant = 1 AND Art < 255 AND Artikelnummer IS NOT NULL AND Internet = 1",
 
     // Business-Key laut YAML
-    'key'   => 'Artikelnummer',
+    'key'   => 'Artikel',
   ],
 
   // Felderliste wie in deinem YAML (Reihenfolge egal)

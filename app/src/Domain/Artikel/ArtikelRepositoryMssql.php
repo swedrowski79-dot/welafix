@@ -20,25 +20,30 @@ final class ArtikelRepositoryMssql
     /**
      * @return array<int, array<string, mixed>>
      */
-    public function fetchAfter(string $afterKey, int $limit = 500): array
+    public function fetchAfterByMapping(array $mapping, string $afterKey, int $limit = 500): array
     {
         $limit = max(1, min(1000, $limit));
 
-        $sql = "SELECT TOP {$limit}
-            Artikelnummer,
-            Bezeichnung,
-            VK3,
-            Warengruppe,
-            Bestand,
-            Internet,
-            [Update]
-          FROM dbo.Artikel
-          WHERE Mandant = 1
-            AND Art < 255
-            AND Artikelnummer IS NOT NULL
-            AND Internet = 1
-            AND (? = '' OR Artikelnummer > ?)
-          ORDER BY Artikelnummer ASC";
+        $source = $mapping['source'] ?? [];
+        $table = $source['table'] ?? 'dbo.Artikel';
+        $where = $source['where'] ?? '';
+        $key = $source['key'] ?? 'Artikel';
+        $select = $mapping['select'] ?? [];
+
+        $select = $this->ensureKeySelected($select, $key);
+        $selectSql = implode(', ', array_map([$this, 'quoteIdentifier'], $select));
+
+        $whereParts = [];
+        if (trim($where) !== '') {
+            $whereParts[] = '(' . $where . ')';
+        }
+        $whereParts[] = '(? = \'\' OR ' . $this->quoteIdentifier($key) . ' > ?)';
+        $whereSql = implode(' AND ', $whereParts);
+
+        $sql = "SELECT TOP {$limit} {$selectSql}
+          FROM {$table}
+          WHERE {$whereSql}
+          ORDER BY " . $this->quoteIdentifier($key) . " ASC";
 
         $this->lastSql = $sql;
         $this->lastParams = [$afterKey, $afterKey];
@@ -63,5 +68,28 @@ final class ArtikelRepositoryMssql
     public function getLastParams(): array
     {
         return $this->lastParams;
+    }
+
+    /**
+     * @param array<int, string> $select
+     * @return array<int, string>
+     */
+    private function ensureKeySelected(array $select, string $key): array
+    {
+        foreach ($select as $field) {
+            if ($field === $key) {
+                return $select;
+            }
+        }
+        $select[] = $key;
+        return $select;
+    }
+
+    private function quoteIdentifier(string $name): string
+    {
+        if (str_contains($name, '[') || str_contains($name, ']')) {
+            return $name;
+        }
+        return '[' . str_replace(']', ']]', $name) . ']';
     }
 }

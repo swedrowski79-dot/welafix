@@ -9,16 +9,30 @@ use PDO;
 use RuntimeException;
 use Welafix\Config\MappingLoader;
 use Welafix\Database\ConnectionFactory;
+use Welafix\Domain\FileDb\FileDbCache;
 
 final class WarengruppeSyncService
 {
     private ConnectionFactory $factory;
     private ?string $lastSql = null;
     private ?array $lastContext = null;
+    private FileDbCache $fileDbCache;
+    private const BASE_COLUMNS = [
+        'afs_wg_id',
+        'name',
+        'parent_id',
+        'path',
+        'path_ids',
+        'last_seen_at',
+        'changed',
+        'change_reason',
+        'id',
+    ];
 
     public function __construct(ConnectionFactory $factory)
     {
         $this->factory = $factory;
+        $this->fileDbCache = new FileDbCache();
     }
 
     /**
@@ -55,20 +69,68 @@ final class WarengruppeSyncService
             'errors_count' => 0,
         ];
 
-        foreach ($rows as $row) {
-            try {
-                $afsWgId = $this->requireIntField($row, 'Warengruppe');
-                $name = $this->requireStringField($row, 'Bezeichnung');
-                $parentId = $this->optionalParentId($row['Anhang'] ?? null);
+        $pdo = $this->factory->sqlite();
+        $existingColumns = $this->loadExistingColumns($pdo, 'warengruppe');
+        $preparedRows = [];
+        $newColumns = [];
 
-                $result = $sqliteRepo->upsert($afsWgId, $name, $parentId, $seenAt);
-                if ($result['inserted']) $stats['inserted']++;
-                if ($result['updated']) $stats['updated']++;
-                if ($result['unchanged']) $stats['unchanged']++;
-            } catch (\Throwable $e) {
-                $stats['errors_count']++;
-                $this->log('Import-Fehler: ' . $e->getMessage());
+        foreach ($rows as $row) {
+            $afsWgId = isset($row['Warengruppe']) ? (string)$row['Warengruppe'] : '';
+            if ($afsWgId === '') {
+                $preparedRows[] = ['error' => 'missing_key', 'row' => $row];
+                continue;
             }
+            $extras = $this->fileDbCache->getMerged('Warengruppen', $afsWgId);
+            $normalizedExtras = $this->normalizeExtras($extras);
+            $normalizedExtras = $this->filterBaseColumns($normalizedExtras, self::BASE_COLUMNS);
+            foreach (array_keys($normalizedExtras) as $field) {
+                if (!isset($existingColumns[$field])) {
+                    $newColumns[$field] = true;
+                }
+            }
+            $preparedRows[] = [
+                'row' => $row,
+                'extras' => $normalizedExtras,
+            ];
+        }
+
+        if ($newColumns !== []) {
+            foreach (array_keys($newColumns) as $column) {
+                if (!isset($existingColumns[$column])) {
+                    $pdo->exec('ALTER TABLE warengruppe ADD COLUMN ' . $this->quoteIdentifier($column) . ' TEXT');
+                    $existingColumns[$column] = true;
+                }
+            }
+        }
+
+        $pdo->beginTransaction();
+        try {
+            foreach ($preparedRows as $prepared) {
+                if (isset($prepared['error'])) {
+                    $stats['errors_count']++;
+                    continue;
+                }
+                $row = $prepared['row'];
+                try {
+                    $afsWgId = $this->requireIntField($row, 'Warengruppe');
+                    $name = $this->requireStringField($row, 'Bezeichnung');
+                    $parentId = $this->optionalParentId($row['Anhang'] ?? null);
+
+                    $extras = $prepared['extras'];
+
+                    $result = $sqliteRepo->upsert($afsWgId, $name, $parentId, $extras, $seenAt);
+                    if ($result['inserted']) $stats['inserted']++;
+                    if ($result['updated']) $stats['updated']++;
+                    if ($result['unchanged']) $stats['unchanged']++;
+                } catch (\Throwable $e) {
+                    $stats['errors_count']++;
+                    $this->log('Import-Fehler: ' . $e->getMessage());
+                }
+            }
+            $pdo->commit();
+        } catch (\Throwable $e) {
+            $pdo->rollBack();
+            throw $e;
         }
 
         $stats['paths_updated'] = $this->buildAndStorePaths($sqliteRepo, $this->factory->sqlite());
@@ -89,12 +151,19 @@ final class WarengruppeSyncService
     {
         $items = $this->loadAllWarengruppen($pdo);
         $updated = 0;
-        foreach ($items as $id => $item) {
-            $idInt = (int)$id;
-            [$path, $pathIds] = $this->buildPath($idInt, $items);
-            if ($repo->updatePath($idInt, $path, $pathIds)) {
-                $updated++;
+        $pdo->beginTransaction();
+        try {
+            foreach ($items as $id => $item) {
+                $idInt = (int)$id;
+                [$path, $pathIds] = $this->buildPath($idInt, $items);
+                if ($repo->updatePath($idInt, $path, $pathIds)) {
+                    $updated++;
+                }
             }
+            $pdo->commit();
+        } catch (\Throwable $e) {
+            $pdo->rollBack();
+            throw $e;
         }
         return $updated;
     }
@@ -160,9 +229,10 @@ final class WarengruppeSyncService
 
         $names = array_reverse($names);
         $ids = array_reverse($ids);
-        $filteredNames = array_values(array_filter($names, static fn(string $value): bool => $value !== ''));
+        $trimmedNames = array_map(static fn(string $value): string => trim($value), $names);
+        $filteredNames = array_values(array_filter($trimmedNames, static fn(string $value): bool => $value !== ''));
 
-        $path = implode(' > ', $filteredNames);
+        $path = implode('/', $filteredNames);
         $pathIds = implode('/', array_map(static fn(int $value): string => (string)$value, $ids));
 
         $this->lastContext = [
@@ -214,6 +284,86 @@ final class WarengruppeSyncService
             throw new RuntimeException("Pflichtfeld leer: {$field}");
         }
         return (int)$value;
+    }
+
+    /**
+     * @return array<string, true>
+     */
+    private function loadExistingColumns(PDO $pdo, string $table): array
+    {
+        $stmt = $pdo->query('PRAGMA table_info(' . $this->quoteIdentifier($table) . ')');
+        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+        $columns = [];
+        foreach ($rows as $row) {
+            $name = (string)($row['name'] ?? '');
+            if ($name !== '') {
+                $columns[$name] = true;
+            }
+        }
+        return $columns;
+    }
+
+    /**
+     * @param array<string, string> $extras
+     * @return array<string, string>
+     */
+    private function normalizeExtras(array $extras): array
+    {
+        $normalized = [];
+        foreach ($extras as $field => $value) {
+            $key = $this->normalizeFieldName($field);
+            if ($key === '') {
+                continue;
+            }
+            $normalized[$key] = $value;
+        }
+        if ($normalized !== []) {
+            ksort($normalized, SORT_STRING);
+        }
+        return $normalized;
+    }
+
+    /**
+     * @param array<string, string> $extras
+     * @param array<int, string> $baseColumns
+     * @return array<string, string>
+     */
+    private function filterBaseColumns(array $extras, array $baseColumns): array
+    {
+        if ($extras === []) {
+            return $extras;
+        }
+        $base = array_fill_keys($baseColumns, true);
+        foreach (array_keys($extras) as $key) {
+            if (isset($base[$key])) {
+                unset($extras[$key]);
+            }
+        }
+        return $extras;
+    }
+
+    private function normalizeFieldName(string $field): string
+    {
+        $field = strtolower(trim($field));
+        if ($field === '') {
+            return '';
+        }
+        $replacements = [
+            'ä' => 'ae',
+            'ö' => 'oe',
+            'ü' => 'ue',
+            'ß' => 'ss',
+        ];
+        $field = strtr($field, $replacements);
+        $field = preg_replace('/\\s+/', '_', $field) ?? $field;
+        $field = preg_replace('/[^a-z0-9_]/', '', $field) ?? $field;
+        $field = trim($field, '_');
+        return $field;
+    }
+
+    private function quoteIdentifier(string $name): string
+    {
+        return '\"' . str_replace('\"', '\"\"', $name) . '\"';
     }
 
     private function log(string $message): void

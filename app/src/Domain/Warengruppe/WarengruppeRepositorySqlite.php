@@ -29,15 +29,32 @@ final class WarengruppeRepositorySqlite
     /**
      * @return array{inserted:bool, updated:bool, unchanged:bool}
      */
-    public function upsert(int $afsWgId, string $name, ?int $parentId, string $seenAtIso): array
+    /**
+     * @param array<string, mixed> $extraFields
+     */
+    public function upsert(int $afsWgId, string $name, ?int $parentId, array $extraFields, string $seenAtIso): array
     {
         $existing = $this->findById($afsWgId);
         $parentIdNormalized = $this->normalizeParentId($parentId);
+        $extraKeys = array_keys($extraFields);
 
         if ($existing === null) {
+            $columns = ['afs_wg_id', 'name', 'parent_id'];
+            $params = [':id', ':name', ':parent_id'];
+            foreach ($extraKeys as $key) {
+                $columns[] = $this->quoteIdentifier($key);
+                $params[] = ':' . $key;
+            }
+            $columns[] = 'last_seen_at';
+            $columns[] = 'changed';
+            $columns[] = 'change_reason';
+            $params[] = ':last_seen_at';
+            $params[] = ':changed';
+            $params[] = ':change_reason';
+
             $stmt = $this->pdo->prepare(
-                'INSERT INTO warengruppe (afs_wg_id, name, parent_id, last_seen_at, changed, change_reason)
-                 VALUES (:id, :name, :parent_id, :last_seen_at, :changed, :change_reason)'
+                'INSERT INTO warengruppe (' . implode(',', $columns) . ')
+                 VALUES (' . implode(',', $params) . ')'
             );
             $stmt->bindValue(':id', $afsWgId, PDO::PARAM_INT);
             $stmt->bindValue(':name', $name, PDO::PARAM_STR);
@@ -45,6 +62,9 @@ final class WarengruppeRepositorySqlite
                 $stmt->bindValue(':parent_id', null, PDO::PARAM_NULL);
             } else {
                 $stmt->bindValue(':parent_id', $parentIdNormalized, PDO::PARAM_INT);
+            }
+            foreach ($extraKeys as $key) {
+                $this->bindNullableText($stmt, ':' . $key, $extraFields[$key] ?? null);
             }
             $stmt->bindValue(':last_seen_at', $seenAtIso, PDO::PARAM_STR);
             $stmt->bindValue(':changed', 1, PDO::PARAM_INT);
@@ -63,6 +83,10 @@ final class WarengruppeRepositorySqlite
             $reasons[] = 'parent';
         }
 
+        if ($this->extrasChanged($existing, $extraFields, $extraKeys)) {
+            $reasons[] = 'extras';
+        }
+
         $changed = (int)$existing['changed'];
         $changeReason = (string)($existing['change_reason'] ?? '');
 
@@ -71,13 +95,20 @@ final class WarengruppeRepositorySqlite
             $changeReason = $this->mergeReasons($changeReason, $reasons);
         }
 
+        $setParts = [
+            'name = :name',
+            'parent_id = :parent_id',
+        ];
+        foreach ($extraKeys as $key) {
+            $setParts[] = $this->quoteIdentifier($key) . ' = :' . $key;
+        }
+        $setParts[] = 'last_seen_at = :last_seen_at';
+        $setParts[] = 'changed = :changed';
+        $setParts[] = 'change_reason = :change_reason';
+
         $stmt = $this->pdo->prepare(
             'UPDATE warengruppe
-             SET name = :name,
-                 parent_id = :parent_id,
-                 last_seen_at = :last_seen_at,
-                 changed = :changed,
-                 change_reason = :change_reason
+             SET ' . implode(', ', $setParts) . '
              WHERE afs_wg_id = :id'
         );
         $stmt->bindValue(':id', $afsWgId, PDO::PARAM_INT);
@@ -86,6 +117,9 @@ final class WarengruppeRepositorySqlite
             $stmt->bindValue(':parent_id', null, PDO::PARAM_NULL);
         } else {
             $stmt->bindValue(':parent_id', $parentIdNormalized, PDO::PARAM_INT);
+        }
+        foreach ($extraKeys as $key) {
+            $this->bindNullableText($stmt, ':' . $key, $extraFields[$key] ?? null);
         }
         $stmt->bindValue(':last_seen_at', $seenAtIso, PDO::PARAM_STR);
         $stmt->bindValue(':changed', $changed, PDO::PARAM_INT);
@@ -154,6 +188,37 @@ final class WarengruppeRepositorySqlite
             return null;
         }
         return (int)$trimmed;
+    }
+
+    private function bindNullableText(\PDOStatement $stmt, string $param, ?string $value): void
+    {
+        if ($value === null || $value === '') {
+            $stmt->bindValue($param, null, PDO::PARAM_NULL);
+            return;
+        }
+        $stmt->bindValue($param, $value, PDO::PARAM_STR);
+    }
+
+    /**
+     * @param array<string, mixed> $existing
+     * @param array<string, mixed> $extraFields
+     * @param array<int, string> $extraKeys
+     */
+    private function extrasChanged(array $existing, array $extraFields, array $extraKeys): bool
+    {
+        foreach ($extraKeys as $key) {
+            $existingValue = (string)($existing[$key] ?? '');
+            $newValue = (string)($extraFields[$key] ?? '');
+            if ($existingValue !== $newValue) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private function quoteIdentifier(string $name): string
+    {
+        return '\"' . str_replace('\"', '\"\"', $name) . '\"';
     }
 
     /**

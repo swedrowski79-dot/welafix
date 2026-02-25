@@ -6,9 +6,11 @@ namespace Welafix\Bootstrap;
 use Welafix\Database\ConnectionFactory;
 use Welafix\Config\MappingLoader;
 use Welafix\Http\Controllers\DashboardController;
+use Welafix\Http\Controllers\SqliteBrowserController;
 use Welafix\Domain\Warengruppe\WarengruppeSyncService;
 use Welafix\Http\Controllers\ApiController;
 use Welafix\Domain\Artikel\ArtikelSyncService;
+use Welafix\Domain\Media\MediaImporter;
 
 final class App
 {
@@ -20,9 +22,15 @@ final class App
         // ensure SQLite exists / migrated
         $factory = new ConnectionFactory();
         $factory->ensureSqliteMigrated();
+        $factory->ensureMediaMigrated();
 
         if ($path === '/' || $path === '/dashboard') {
             (new DashboardController($factory))->index();
+            return;
+        }
+
+        if ($path === '/dashboard/sqlite') {
+            (new DashboardController($factory))->sqliteBrowser();
             return;
         }
 
@@ -65,6 +73,16 @@ final class App
             return;
         }
 
+        if ($path === '/api/documents') {
+            (new ApiController($factory))->documentsList();
+            return;
+        }
+
+        if (preg_match('#^/api/documents/(\d+)$#', $path, $matches)) {
+            (new ApiController($factory))->documentDetail((int)$matches[1]);
+            return;
+        }
+
         if ($path === '/api/sync-state') {
             (new ApiController($factory))->syncState();
             return;
@@ -77,6 +95,26 @@ final class App
 
         if ($path === '/api/test-sqlite') {
             (new ApiController($factory))->testSqlite();
+            return;
+        }
+
+        if ($path === '/api/sqlite/tables') {
+            (new SqliteBrowserController($factory))->tables();
+            return;
+        }
+
+        if ($path === '/api/sqlite/table') {
+            (new SqliteBrowserController($factory))->table();
+            return;
+        }
+
+        if ($path === '/api/media') {
+            (new ApiController($factory))->mediaList();
+            return;
+        }
+
+        if ($path === '/api/media/stats') {
+            (new ApiController($factory))->mediaStats();
             return;
         }
 
@@ -145,6 +183,33 @@ final class App
             }
             return;
         }
+
+        if ($path === '/sync/media/images') {
+            header('Content-Type: application/json');
+            try {
+                $importer = new MediaImporter($factory);
+                $stats = $importer->importArticleImages();
+                echo json_encode($stats);
+            } catch (\Throwable $e) {
+                http_response_code(500);
+                echo json_encode(['error' => $e->getMessage()]);
+            }
+            return;
+        }
+
+        if ($path === '/sync/media/documents') {
+            header('Content-Type: application/json');
+            try {
+                $importer = new MediaImporter($factory);
+                $stats = $importer->importDocuments();
+                echo json_encode($stats);
+            } catch (\Throwable $e) {
+                http_response_code(500);
+                echo json_encode(['error' => $e->getMessage()]);
+            }
+            return;
+        }
+
 
         http_response_code(404);
         echo "404 Not Found";

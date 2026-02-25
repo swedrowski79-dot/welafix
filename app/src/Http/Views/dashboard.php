@@ -1,71 +1,80 @@
 <?php
 declare(strict_types=1);
 /** @var array $data */
-$counts = $data['counts'];
 ?>
 <div class="card">
-  <h2>Welafix Dashboard</h2>
-  <div class="btn-row">
-    <button class="btn" type="button" data-endpoint="/api/status">Status</button>
-    <button class="btn" type="button" data-endpoint="/api/test-mssql">MSSQL Test</button>
-    <button class="btn" type="button" data-endpoint="/api/test-sqlite">SQLite Test</button>
-    <button class="btn" type="button" data-endpoint="/sync/artikel" data-sync="artikel">Artikel Sync</button>
-    <button class="btn" type="button" id="artikel-cancel" disabled>Abbrechen</button>
-    <label for="artikel-batch">Batch</label>
-    <select id="artikel-batch">
-      <option value="200">200</option>
-      <option value="500" selected>500</option>
-      <option value="1000">1000</option>
-    </select>
+  <h2>Dashboard</h2>
+  <div class="tiles">
+    <div class="tile">
+      <div class="tile-label">Systemstatus</div>
+      <div class="status-row">
+        <span class="status-dot" id="mssql-dot"></span>
+        <span class="status-text" id="mssql-status">MSSQL: prüfe…</span>
+      </div>
+      <div class="status-row">
+        <span class="status-dot" id="sqlite-dot"></span>
+        <span class="status-text" id="sqlite-status">SQLite: prüfe…</span>
+      </div>
+    </div>
+    <div class="tile">
+      <div class="tile-label">Sync</div>
+      <div class="btn-row">
+        <button class="btn" type="button" data-endpoint="/sync/warengruppe">Warengruppe</button>
+        <button class="btn" type="button" data-endpoint="/sync/artikel" data-sync="artikel">Artikel</button>
+        <button class="btn" type="button" data-endpoint="/sync/media/images">Media Import (Bilder)</button>
+        <button class="btn" type="button" data-endpoint="/sync/media/documents">Media Import (Dokumente)</button>
+        <button class="btn" type="button" id="artikel-cancel" disabled>Abbrechen</button>
+      </div>
+      <div class="inline-controls">
+        <label for="artikel-batch">Batch</label>
+        <select id="artikel-batch">
+          <option value="200">200</option>
+          <option value="500" selected>500</option>
+          <option value="1000">1000</option>
+        </select>
+      </div>
+    </div>
+    <div class="tile">
+      <div class="tile-label">Tools</div>
+      <a class="btn" href="/dashboard/sqlite">SQLite Browser</a>
+    </div>
   </div>
-  <pre id="out">Klicke einen Button, um eine API-Antwort zu sehen.</pre>
 </div>
 
 <div class="card">
-  <h2>Übersicht</h2>
-  <div class="grid">
-    <div class="card">
-      <strong>Artikel changed</strong><br>
-      <span class="badge"><?= htmlspecialchars((string)$counts['artikel_changed']) ?></span>
-    </div>
-    <div class="card">
-      <strong>Warengruppen changed</strong><br>
-      <span class="badge"><?= htmlspecialchars((string)$counts['warengruppe_changed']) ?></span>
-    </div>
-    <div class="card">
-      <strong>Media changed</strong><br>
-      <span class="badge"><?= htmlspecialchars((string)$counts['media_changed']) ?></span>
-    </div>
-  </div>
-</div>
-
-<div class="card">
-  <h2>Sync</h2>
-  <div class="btn-row">
-    <a class="btn" href="/sync/warengruppe">Warengruppen sync</a>
-    <a class="btn" href="/sync/artikel">Artikel sync</a>
-  </div>
-  <p>
-    Aktuell changed:
-    Artikel <span class="badge"><?= htmlspecialchars((string)$counts['artikel_changed']) ?></span>
-    Warengruppen <span class="badge"><?= htmlspecialchars((string)$counts['warengruppe_changed']) ?></span>
-  </p>
-</div>
-
-<div class="card">
-  <h2>Konfiguration</h2>
-  <p>Mappings liegen unter <code>app/src/Config/mappings/</code>.</p>
+  <h2>Output</h2>
+  <pre id="out" class="log">Klicke einen Button, um eine API-Antwort zu sehen.</pre>
 </div>
 
 <script>
   (function () {
     const output = document.getElementById('out');
     const buttons = document.querySelectorAll('button[data-endpoint]');
-    const setOutput = (value) => {
-      output.textContent = value;
+    const cancelBtn = document.getElementById('artikel-cancel');
+    const setOutput = (value) => { output.textContent = value; };
+
+    const setStatus = (dotId, textId, ok, label) => {
+      const dot = document.getElementById(dotId);
+      const text = document.getElementById(textId);
+      if (!dot || !text) return;
+      dot.classList.remove('ok', 'fail');
+      dot.classList.add(ok ? 'ok' : 'fail');
+      text.textContent = label + ': ' + (ok ? 'ok' : 'fehler');
     };
 
-    const cancelBtn = document.getElementById('artikel-cancel');
+    const checkStatus = async (endpoint, dotId, textId, label) => {
+      try {
+        const response = await fetch(endpoint, { headers: { 'Accept': 'application/json' } });
+        const json = await response.json();
+        setStatus(dotId, textId, !!json.ok, label);
+      } catch (e) {
+        setStatus(dotId, textId, false, label);
+      }
+    };
+
+    checkStatus('/api/test-mssql', 'mssql-dot', 'mssql-status', 'MSSQL');
+    checkStatus('/api/test-sqlite', 'sqlite-dot', 'sqlite-status', 'SQLite');
+
     let cancelRequested = false;
 
     const runArtikelSync = async (button) => {
