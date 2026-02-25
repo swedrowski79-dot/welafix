@@ -24,7 +24,6 @@ final class App
         // ensure SQLite exists / migrated
         $factory = new ConnectionFactory();
         Db::setFactory($factory);
-        Db::ensureMigrated();
 
         if ($path === '/' || $path === '/dashboard') {
             (new DashboardController($factory))->index();

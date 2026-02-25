@@ -163,11 +163,14 @@ final class ConnectionFactory
         $stmt = $pdo->query("PRAGMA table_info({$table})");
         $existing = [];
         foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
-            $existing[$row['name']] = true;
+            $name = (string)($row['name'] ?? '');
+            if ($name !== '') {
+                $existing[strtolower($name)] = true;
+            }
         }
 
         foreach ($columns as $name => $type) {
-            if (isset($existing[$name])) {
+            if (isset($existing[strtolower($name)])) {
                 continue;
             }
             $pdo->exec("ALTER TABLE {$table} ADD COLUMN {$name} {$type}");

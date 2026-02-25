@@ -16,11 +16,14 @@ final class SchemaSyncService
         }
 
         $sqliteCols = $this->fetchSqliteColumns($sqlite, $sqliteTable);
-        $sqliteLookup = array_fill_keys($sqliteCols, true);
+        $sqliteLookup = [];
+        foreach ($sqliteCols as $col) {
+            $sqliteLookup[strtolower($col)] = true;
+        }
 
         $added = [];
         foreach ($mssqlCols as $col) {
-            if (!isset($sqliteLookup[$col])) {
+            if (!isset($sqliteLookup[strtolower($col)])) {
                 $sqlite->exec(
                     'ALTER TABLE ' . $this->quoteIdentifier($sqliteTable) .
                     ' ADD COLUMN ' . $this->quoteIdentifier($col) . ' TEXT'
