@@ -17,7 +17,7 @@ final class DashboardController
         $counts = [
             'artikel_changed' => (int)$pdo->query("SELECT COUNT(*) FROM artikel WHERE changed = 1")->fetchColumn(),
             'warengruppe_changed' => (int)$pdo->query("SELECT COUNT(*) FROM warengruppe WHERE changed = 1")->fetchColumn(),
-            'media_changed' => (int)$pdo->query("SELECT COUNT(*) FROM media_files WHERE changed = 1")->fetchColumn(),
+            'media_changed' => (int)$pdo->query("SELECT COUNT(*) FROM media WHERE changed = 1")->fetchColumn(),
         ];
 
         $view = __DIR__ . '/../Views/dashboard.php';

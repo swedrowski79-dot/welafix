@@ -57,7 +57,8 @@ final class SqliteBrowserController
                 return;
             }
 
-            if ($name === 'artikel' || $name === 'warengruppe') {
+            $showAll = isset($_GET['all']) && (string)$_GET['all'] === '1';
+            if (!$showAll && ($name === 'artikel' || $name === 'warengruppe')) {
                 $mapping = new MappingService();
                 $allowed = array_values(array_unique(array_merge(
                     $mapping->getAllowedColumns($name === 'artikel' ? 'artikel' : 'warengruppe'),
@@ -134,6 +135,39 @@ final class SqliteBrowserController
                 'per_page' => $perPage,
                 'totalRows' => $totalRows,
                 'query' => $q,
+            ]);
+        } catch (\Throwable $e) {
+            $this->jsonResponse([
+                'error' => $e->getMessage(),
+                'sql' => null,
+                'params' => null,
+            ], 500);
+        }
+    }
+
+    public function clearTable(): void
+    {
+        try {
+            $pdo = $this->factory->sqlite();
+
+            $name = isset($_GET['name']) ? trim((string)$_GET['name']) : '';
+            if ($name === '') {
+                $this->jsonResponse(['error' => 'Tabellenname fehlt.', 'sql' => null, 'params' => null], 400);
+                return;
+            }
+
+            $allowedTables = $this->getAllowedTables($pdo);
+            if (!isset($allowedTables[$name])) {
+                $this->jsonResponse(['error' => 'Unbekannte Tabelle.', 'sql' => null, 'params' => null], 400);
+                return;
+            }
+
+            $pdo->exec('DELETE FROM ' . $this->quoteIdentifier($name));
+
+            $this->jsonResponse([
+                'ok' => true,
+                'table' => $name,
+                'message' => 'Tabelle geleert.',
             ]);
         } catch (\Throwable $e) {
             $this->jsonResponse([

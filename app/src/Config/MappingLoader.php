@@ -76,16 +76,6 @@ final class MappingLoader
     }
 
     /**
-     * @param array<int, string> $allowed
-     */
-    public function buildSelectList(array $allowed, string $alias = ''): string
-    {
-        $this->validateColumns($allowed, 'select');
-        $prefix = $alias !== '' ? $alias . '.' : '';
-        return implode(', ', array_map(static fn(string $col): string => $prefix . $col, $allowed));
-    }
-
-    /**
      * @param array<string, mixed> $row
      * @param array<int, string> $allowed
      * @return array<string, mixed>

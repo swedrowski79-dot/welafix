@@ -26,14 +26,12 @@ final class ArtikelRepositorySqlite
         $sql = 'CREATE TABLE IF NOT EXISTS artikel (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             afs_artikel_id TEXT UNIQUE,
-            afs_key TEXT UNIQUE,
             artikelnummer TEXT,
-            name TEXT,
             warengruppe_id INTEGER,
-            price REAL,
-            stock INTEGER,
-            online INTEGER,
             seo_url TEXT,
+            master_modell TEXT,
+            is_master INTEGER,
+            is_deleted INTEGER DEFAULT 0,
             row_hash TEXT,
             last_seen_at TEXT,
             last_synced_at TEXT,
@@ -76,8 +74,8 @@ final class ArtikelRepositorySqlite
         $diff = $this->tracker->buildDiff($existing, $extraFields, $diffColumns);
 
         if ($existing === null) {
-            $columns = ['afs_artikel_id', 'afs_key', 'artikelnummer', 'name', 'warengruppe_id', 'price', 'stock', 'online'];
-            $params = [':afs_artikel_id', ':afs_key', ':artikelnummer', ':name', ':warengruppe_id', ':price', ':stock', ':online'];
+            $columns = ['afs_artikel_id', 'artikelnummer', 'warengruppe_id', 'is_deleted'];
+            $params = [':afs_artikel_id', ':artikelnummer', ':warengruppe_id', ':is_deleted'];
             foreach ($extraKeys as $key) {
                 $columns[] = $this->quoteIdentifier($key);
                 $params[] = ':' . $key;
@@ -97,13 +95,9 @@ final class ArtikelRepositorySqlite
 
             $stmt = $this->prepareInsert($extraKeys, $columns, $params);
             $stmt->bindValue(':afs_artikel_id', $afsArtikelId, PDO::PARAM_STR);
-            $stmt->bindValue(':afs_key', (string)$data['afs_key'], PDO::PARAM_STR);
             $stmt->bindValue(':artikelnummer', (string)$data['artikelnummer'], PDO::PARAM_STR);
-            $stmt->bindValue(':name', (string)$data['name'], PDO::PARAM_STR);
             $this->bindNullableInt($stmt, ':warengruppe_id', $data['warengruppe_id'] ?? null);
-            $stmt->bindValue(':price', (float)$data['price'], PDO::PARAM_STR);
-            $stmt->bindValue(':stock', (int)$data['stock'], PDO::PARAM_INT);
-            $stmt->bindValue(':online', (int)$data['online'], PDO::PARAM_INT);
+            $stmt->bindValue(':is_deleted', 0, PDO::PARAM_INT);
             foreach ($extraKeys as $key) {
                 $this->bindNullableText($stmt, ':' . $key, $extraFields[$key] ?? null);
             }
@@ -114,9 +108,6 @@ final class ArtikelRepositorySqlite
             $stmt->bindValue(':changed_fields', $this->tracker->encodeDiff($diff), PDO::PARAM_STR);
             $stmt->bindValue(':change_reason', 'new', PDO::PARAM_STR);
             $stmt->execute();
-            if ($diff !== []) {
-                $this->tracker->writeHistory($this->pdo, 'artikel', (string)$data['artikelnummer'], $seenAtIso, $diff, 'afs');
-            }
             return ['inserted' => true, 'updated' => false, 'unchanged' => false, 'diff' => $diff];
         }
 
@@ -126,8 +117,7 @@ final class ArtikelRepositorySqlite
                 'UPDATE artikel
                  SET last_seen_at = :last_seen_at,
                      last_synced_at = :last_synced_at,
-                     changed = 0,
-                     changed_fields = NULL
+                     is_deleted = 0
                  WHERE afs_artikel_id = :id'
             );
             $stmt->bindValue(':last_seen_at', $seenAtIso, PDO::PARAM_STR);
@@ -140,13 +130,9 @@ final class ArtikelRepositorySqlite
         $changeReason = $this->mergeReasons((string)($existing['change_reason'] ?? ''), ['fields']);
 
         $setParts = [
-            'afs_key = :afs_key',
             'artikelnummer = :artikelnummer',
-            'name = :name',
             'warengruppe_id = :warengruppe_id',
-            'price = :price',
-            'stock = :stock',
-            'online = :online',
+            'is_deleted = :is_deleted',
         ];
         foreach ($extraKeys as $key) {
             $setParts[] = $this->quoteIdentifier($key) . ' = :' . $key;
@@ -154,37 +140,29 @@ final class ArtikelRepositorySqlite
         $setParts[] = 'row_hash = :row_hash';
         $setParts[] = 'last_seen_at = :last_seen_at';
         $setParts[] = 'last_synced_at = :last_synced_at';
-        $setParts[] = 'changed = :changed';
-        $setParts[] = 'changed_fields = :changed_fields';
+        if ($diff !== []) {
+            $setParts[] = 'changed = 1';
+            $setParts[] = 'changed_fields = :changed_fields';
+        }
         $setParts[] = 'change_reason = :change_reason';
 
         $stmt = $this->prepareUpdate($extraKeys, $setParts);
-        $stmt->bindValue(':afs_key', (string)$data['afs_key'], PDO::PARAM_STR);
         $stmt->bindValue(':artikelnummer', (string)$data['artikelnummer'], PDO::PARAM_STR);
-        $stmt->bindValue(':name', (string)$data['name'], PDO::PARAM_STR);
         $this->bindNullableInt($stmt, ':warengruppe_id', $data['warengruppe_id'] ?? null);
-        $stmt->bindValue(':price', (float)$data['price'], PDO::PARAM_STR);
-        $stmt->bindValue(':stock', (int)$data['stock'], PDO::PARAM_INT);
-        $stmt->bindValue(':online', (int)$data['online'], PDO::PARAM_INT);
+        $stmt->bindValue(':is_deleted', 0, PDO::PARAM_INT);
         foreach ($extraKeys as $key) {
             $this->bindNullableText($stmt, ':' . $key, $extraFields[$key] ?? null);
         }
         $stmt->bindValue(':row_hash', $rowHash, PDO::PARAM_STR);
         $stmt->bindValue(':last_seen_at', $seenAtIso, PDO::PARAM_STR);
         $stmt->bindValue(':last_synced_at', $seenAtIso, PDO::PARAM_STR);
-        $stmt->bindValue(':changed', $diff !== [] ? 1 : 0, PDO::PARAM_INT);
         if ($diff !== []) {
             $stmt->bindValue(':changed_fields', $this->tracker->encodeDiff($diff), PDO::PARAM_STR);
-        } else {
-            $stmt->bindValue(':changed_fields', null, PDO::PARAM_NULL);
         }
         $stmt->bindValue(':change_reason', $changeReason, PDO::PARAM_STR);
         $stmt->bindValue(':id', $afsArtikelId, PDO::PARAM_STR);
         $stmt->execute();
 
-        if ($diff !== []) {
-            $this->tracker->writeHistory($this->pdo, 'artikel', (string)$data['artikelnummer'], $seenAtIso, $diff, 'afs');
-        }
         return ['inserted' => false, 'updated' => true, 'unchanged' => false, 'diff' => $diff];
     }
 

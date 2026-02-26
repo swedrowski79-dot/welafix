@@ -11,7 +11,6 @@ use Welafix\Http\Controllers\SqliteBrowserController;
 use Welafix\Domain\Warengruppe\WarengruppeSyncService;
 use Welafix\Http\Controllers\ApiController;
 use Welafix\Domain\Artikel\ArtikelSyncService;
-use Welafix\Domain\Media\MediaImporter;
 use Welafix\Domain\Export\TemplateExportService;
 
 final class App
@@ -99,6 +98,16 @@ final class App
             return;
         }
 
+        if ($path === '/api/filedb/check') {
+            (new ApiController($factory))->fileDbCheck();
+            return;
+        }
+
+        if ($path === '/api/filedb/apply') {
+            (new ApiController($factory))->fileDbApply();
+            return;
+        }
+
         if ($path === '/api/test-mssql') {
             (new ApiController($factory))->testMssql();
             return;
@@ -118,6 +127,10 @@ final class App
             (new SqliteBrowserController($factory))->table();
             return;
         }
+        if ($path === '/api/sqlite/clear') {
+            (new SqliteBrowserController($factory))->clearTable();
+            return;
+        }
 
         if ($path === '/api/media') {
             (new ApiController($factory))->mediaList();
@@ -126,6 +139,14 @@ final class App
 
         if ($path === '/api/media/stats') {
             (new ApiController($factory))->mediaStats();
+            return;
+        }
+        if ($path === '/api/media/usage') {
+            (new ApiController($factory))->mediaUsage();
+            return;
+        }
+        if ($path === '/api/xt/check') {
+            (new ApiController($factory))->xtApiCheck();
             return;
         }
 
@@ -167,7 +188,7 @@ final class App
                 $after = isset($_GET['after']) ? (string)$_GET['after'] : '';
                 $maxSeconds = isset($_GET['max_seconds']) ? (int)$_GET['max_seconds'] : 0;
 
-                $batch = max(1, min(1000, $batch));
+                $batch = max(1, min(10000, $batch));
                 $start = microtime(true);
                 $stats = $service->processBatch($after, $batch);
 
@@ -205,11 +226,11 @@ final class App
             return;
         }
 
-        if ($path === '/sync/media/images') {
+        if ($path === '/sync/media') {
             header('Content-Type: application/json');
             try {
-                $importer = new MediaImporter($factory);
-                $stats = $importer->importArticleImages();
+                $service = new \Welafix\Domain\Media\MediaSyncService($factory);
+                $stats = $service->run();
                 echo json_encode($stats);
             } catch (\Throwable $e) {
                 http_response_code(500);
@@ -218,15 +239,19 @@ final class App
             return;
         }
 
-        if ($path === '/sync/media/documents') {
+        if ($path === '/sync/dokument') {
             header('Content-Type: application/json');
             try {
-                $importer = new MediaImporter($factory);
-                $stats = $importer->importDocuments();
+                $service = new \Welafix\Domain\Dokument\DokumentSyncService();
+                $stats = $service->run();
                 echo json_encode($stats);
             } catch (\Throwable $e) {
                 http_response_code(500);
-                echo json_encode(['error' => $e->getMessage(), 'sql' => null, 'params' => null]);
+                $sql = null;
+                if (isset($service) && method_exists($service, 'getLastSql')) {
+                    $sql = $service->getLastSql();
+                }
+                echo json_encode(['error' => $e->getMessage(), 'sql' => $sql ? $this->truncateSql($sql) : null, 'params' => null]);
             }
             return;
         }

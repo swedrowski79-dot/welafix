@@ -20,6 +20,7 @@ declare(strict_types=1);
       <option value="100">100</option>
       <option value="200">200</option>
     </select>
+    <button class="btn" id="clear-table-btn" type="button">Tabelle leeren</button>
   </div>
   <div id="error-box" class="error" style="margin-top:10px; display:none;"></div>
 </div>
@@ -44,6 +45,7 @@ declare(strict_types=1);
     const dataTable = document.getElementById('data-table');
     const thead = dataTable.querySelector('thead');
     const tbody = dataTable.querySelector('tbody');
+    const clearBtn = document.getElementById('clear-table-btn');
     const prevBtn = document.getElementById('prev-btn');
     const nextBtn = document.getElementById('next-btn');
     const pageWindow = document.getElementById('page-window');
@@ -166,14 +168,15 @@ declare(strict_types=1);
       setLoading(true);
       showError('');
       try {
-        const params = new URLSearchParams({
-          name: state.table,
-          page: String(state.page),
-          per_page: String(state.perPage)
-        });
-        if (state.q) {
-          params.set('q', state.q);
-        }
+      const params = new URLSearchParams({
+        name: state.table,
+        page: String(state.page),
+        per_page: String(state.perPage)
+      });
+      params.set('all', '1');
+      if (state.q) {
+        params.set('q', state.q);
+      }
         const response = await fetch('/api/sqlite/table?' + params.toString(), {
           headers: { 'Accept': 'application/json' }
         });
@@ -253,6 +256,7 @@ declare(strict_types=1);
       await loadTableData();
     });
 
+
     prevBtn.addEventListener('click', async () => {
       if (state.page > 1) {
         state.page -= 1;
@@ -267,6 +271,34 @@ declare(strict_types=1);
         await loadTableData();
       }
     });
+
+    if (clearBtn) {
+      clearBtn.addEventListener('click', async () => {
+        if (!state.table) return;
+        const ok = confirm('Willst du wirklich die Tabelle ' + state.table + ' löschen?');
+        if (!ok) return;
+        setLoading(true);
+        showError('');
+        try {
+          const response = await fetch('/api/sqlite/clear?name=' + encodeURIComponent(state.table), {
+            method: 'POST',
+            headers: { 'Accept': 'application/json' }
+          });
+          const json = await response.json();
+          if (!response.ok) {
+            throw new Error(json.error || 'Fehler beim Leeren der Tabelle.');
+          }
+          state.page = 1;
+          state.q = '';
+          searchInput.value = '';
+          await loadTableData();
+        } catch (e) {
+          showError(e.message);
+        } finally {
+          setLoading(false);
+        }
+      });
+    }
 
     loadTables();
   })();

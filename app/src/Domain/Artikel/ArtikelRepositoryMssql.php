@@ -23,7 +23,7 @@ final class ArtikelRepositoryMssql
      */
     public function fetchAfterByMapping(array $mapping, string $afterKey, int $limit = 500): array
     {
-        $limit = max(1, min(1000, $limit));
+        $limit = max(1, min(10000, $limit));
         $driver = $this->pdo->getAttribute(PDO::ATTR_DRIVER_NAME);
         if ($driver !== 'sqlsrv') {
             throw new RuntimeException('MSSQL Query mit TOP darf nur auf sqlsrv laufen.');

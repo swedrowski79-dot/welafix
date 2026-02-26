@@ -15,14 +15,18 @@ declare(strict_types=1);
         <span class="status-dot" id="sqlite-dot"></span>
         <span class="status-text" id="sqlite-status">SQLite: prüfe…</span>
       </div>
+      <div class="status-row">
+        <span class="status-dot" id="xtapi-dot"></span>
+        <span class="status-text" id="xtapi-status">XT-API: prüfe…</span>
+      </div>
     </div>
     <div class="tile">
       <div class="tile-label">Sync</div>
       <div class="btn-row">
         <button class="btn" type="button" data-endpoint="/sync/warengruppe">Warengruppe</button>
         <button class="btn" type="button" data-endpoint="/sync/artikel" data-sync="artikel">Artikel</button>
-        <button class="btn" type="button" data-endpoint="/sync/media/images">Media Import (Bilder)</button>
-        <button class="btn" type="button" data-endpoint="/sync/media/documents">Media Import (Dokumente)</button>
+        <button class="btn" type="button" data-endpoint="/sync/dokument">Dokument</button>
+        <button class="btn" type="button" data-endpoint="/sync/media">Media Sync</button>
         <button class="btn" type="button" id="artikel-cancel" disabled>Abbrechen</button>
       </div>
       <div class="inline-controls">
@@ -31,12 +35,18 @@ declare(strict_types=1);
           <option value="200">200</option>
           <option value="500" selected>500</option>
           <option value="1000">1000</option>
+          <option value="2000">2000</option>
+          <option value="5000">5000</option>
+          <option value="10000">10000</option>
         </select>
       </div>
     </div>
     <div class="tile">
       <div class="tile-label">Tools</div>
       <a class="btn" href="/dashboard/sqlite">SQLite Browser</a>
+      <button class="btn" type="button" data-endpoint="/api/filedb/check">FileDB Check</button>
+      <button class="btn" type="button" data-endpoint="/api/filedb/apply">FileDB Apply</button>
+      <button class="btn" type="button" data-endpoint="/migrate.php">Migration</button>
     </div>
   </div>
 </div>
@@ -74,6 +84,32 @@ declare(strict_types=1);
 
     checkStatus('/api/test-mssql', 'mssql-dot', 'mssql-status', 'MSSQL');
     checkStatus('/api/test-sqlite', 'sqlite-dot', 'sqlite-status', 'SQLite');
+    const checkXtStatus = async () => {
+      try {
+        const response = await fetch('/api/xt/check', { headers: { 'Accept': 'application/json' } });
+        const json = await response.json();
+        const dot = document.getElementById('xtapi-dot');
+        const text = document.getElementById('xtapi-status');
+        if (!dot || !text) return;
+        dot.classList.remove('ok', 'fail');
+        if (json.ok) {
+          dot.classList.add('ok');
+          text.textContent = 'XT-API: erreichbar';
+          return;
+        }
+        dot.classList.add('fail');
+        const status = json.status || 'fehler';
+        let label = 'XT-API: ';
+        if (status === 'auth_fail') label += 'auth fail';
+        else if (status === 'db_fail') label += 'db fail';
+        else if (status === 'unreachable') label += 'nicht erreichbar';
+        else label += 'fehler';
+        text.textContent = label;
+      } catch (e) {
+        setStatus('xtapi-dot', 'xtapi-status', false, 'XT-API');
+      }
+    };
+    checkXtStatus();
 
     let cancelRequested = false;
 

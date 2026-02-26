@@ -84,9 +84,6 @@ final class WarengruppeRepositorySqlite
             $stmt->bindValue(':changed_fields', $this->tracker->encodeDiff($diff), PDO::PARAM_STR);
             $stmt->bindValue(':change_reason', 'new', PDO::PARAM_STR);
             $stmt->execute();
-            if ($diff !== []) {
-                $this->tracker->writeHistory($this->pdo, 'warengruppe', (string)$afsWgId, $seenAtIso, $diff, 'afs');
-            }
             return ['inserted' => true, 'updated' => false, 'unchanged' => false, 'diff' => $diff];
         }
 
@@ -104,7 +101,6 @@ final class WarengruppeRepositorySqlite
             $reasons[] = 'extras';
         }
 
-        $changed = $diff !== [] ? 1 : 0;
         $changeReason = '';
         if ($diff !== [] && $reasons !== []) {
             $changeReason = $this->mergeReasons((string)($existing['change_reason'] ?? ''), $reasons);
@@ -119,8 +115,10 @@ final class WarengruppeRepositorySqlite
         }
         $setParts[] = 'last_seen_at = :last_seen_at';
         $setParts[] = 'last_synced_at = :last_synced_at';
-        $setParts[] = 'changed = :changed';
-        $setParts[] = 'changed_fields = :changed_fields';
+        if ($diff !== []) {
+            $setParts[] = 'changed = 1';
+            $setParts[] = 'changed_fields = :changed_fields';
+        }
         $setParts[] = 'change_reason = :change_reason';
 
         $stmt = $this->pdo->prepare(
@@ -140,11 +138,8 @@ final class WarengruppeRepositorySqlite
         }
         $stmt->bindValue(':last_seen_at', $seenAtIso, PDO::PARAM_STR);
         $stmt->bindValue(':last_synced_at', $seenAtIso, PDO::PARAM_STR);
-        $stmt->bindValue(':changed', $changed, PDO::PARAM_INT);
         if ($diff !== []) {
             $stmt->bindValue(':changed_fields', $this->tracker->encodeDiff($diff), PDO::PARAM_STR);
-        } else {
-            $stmt->bindValue(':changed_fields', null, PDO::PARAM_NULL);
         }
         if ($changeReason !== '') {
             $stmt->bindValue(':change_reason', $changeReason, PDO::PARAM_STR);
@@ -153,55 +148,11 @@ final class WarengruppeRepositorySqlite
         }
         $stmt->execute();
 
-        if ($diff !== []) {
-            $this->tracker->writeHistory($this->pdo, 'warengruppe', (string)$afsWgId, $seenAtIso, $diff, 'afs');
-        }
         if ($reasons !== []) {
             return ['inserted' => false, 'updated' => true, 'unchanged' => false, 'diff' => $diff];
         }
 
         return ['inserted' => false, 'updated' => false, 'unchanged' => true, 'diff' => $diff];
-    }
-
-    public function updatePath(int $afsWgId, string $path, string $pathIds): bool
-    {
-        $existing = $this->findById($afsWgId);
-        if ($existing === null) {
-            return false;
-        }
-
-        $pathChanged = (string)($existing['path'] ?? '') !== $path;
-        $pathIdsChanged = (string)($existing['path_ids'] ?? '') !== $pathIds;
-
-        if (!$pathChanged && !$pathIdsChanged) {
-            return false;
-        }
-
-        $reasons = [];
-        if ($pathChanged || $pathIdsChanged) {
-            $reasons[] = 'path';
-        }
-
-        $changeReason = $this->mergeReasons((string)($existing['change_reason'] ?? ''), $reasons);
-
-        $stmt = $this->pdo->prepare(
-            'UPDATE warengruppe
-             SET path = :path,
-                 path_ids = :path_ids,
-                 changed = 1,
-                 change_reason = :change_reason
-             WHERE afs_wg_id = :id'
-        );
-        $stmt->bindValue(':id', $afsWgId, PDO::PARAM_INT);
-        $stmt->bindValue(':path', $path, PDO::PARAM_STR);
-        $stmt->bindValue(':path_ids', $pathIds, PDO::PARAM_STR);
-        if ($changeReason !== '') {
-            $stmt->bindValue(':change_reason', $changeReason, PDO::PARAM_STR);
-        } else {
-            $stmt->bindValue(':change_reason', null, PDO::PARAM_NULL);
-        }
-        $stmt->execute();
-        return true;
     }
 
     private function normalizeParentId(int|string|null $value): ?int

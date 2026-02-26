@@ -12,7 +12,7 @@ use Welafix\Database\ConnectionFactory;
 use Welafix\Database\Db;
 use Welafix\Database\SchemaSyncService;
 use Welafix\Domain\ChangeTracking\ChangeTracker;
-use Welafix\Domain\FileDb\FileDbWriter;
+use Welafix\Domain\FileDb\FileDbTemplateApplier;
 use Welafix\Infrastructure\Sqlite\SqliteSchemaHelper;
 
 final class WarengruppeSyncService
@@ -74,7 +74,8 @@ final class WarengruppeSyncService
         $preparedRows = [];
         $newColumns = [];
         $allowedLookup = array_flip($selectFields);
-        $fileDbWriter = new FileDbWriter();
+        $applyFileDb = $this->shouldApplyFileDbOnSync();
+        $fileDbApplier = $applyFileDb ? new FileDbTemplateApplier() : null;
         $diffColumns = $selectFields;
 
         foreach ($rows as $row) {
@@ -125,20 +126,12 @@ final class WarengruppeSyncService
                     if ($result['updated']) $stats['updated']++;
                     if ($result['unchanged']) $stats['unchanged']++;
 
-                    $diff = $result['diff'] ?? [];
-                    if ($diff !== []) {
-                        $fields = $extras;
-                        $fields['changed'] = 1;
-                        $fields['changed_fields'] = $sqliteRepo->encodeDiff($diff);
-                        $fields['last_synced_at'] = $seenAt;
-                        $fileDbWriter->writeWarengruppe(
-                            $name,
-                            (string)$afsWgId,
-                            $fields,
-                            array_keys($diff),
-                            ['changed', 'changed_fields', 'last_synced_at']
-                        );
+                    if ($fileDbApplier) {
+                        $context = array_merge($row, $extras);
+                        $context['Bezeichnung'] = $name;
+                        $fileDbApplier->applyWarengruppe($pdo, $afsWgId, $name, $context);
                     }
+
                 } catch (\Throwable $e) {
                     $stats['errors_count']++;
                     $this->log('Import-Fehler: ' . $e->getMessage());
@@ -171,7 +164,6 @@ final class WarengruppeSyncService
         $seoCache = [];
         $seoBuilding = [];
         $tracker = new ChangeTracker();
-        $fileDbWriter = new FileDbWriter();
 
         $computeSeo = function (int $id) use (&$computeSeo, &$items, &$seoCache, &$seoBuilding): string {
             if (isset($seoCache[$id])) {
@@ -236,7 +228,6 @@ final class WarengruppeSyncService
                         'new' => $seoUrl,
                     ];
                     $mergedDiff = $existingDiff;
-                    $tracker->writeHistory($pdo, 'warengruppe', (string)$idInt, $now, $existingDiff, 'afs');
                 }
 
                 $stmt = $pdo->prepare(
@@ -260,21 +251,6 @@ final class WarengruppeSyncService
                     ':id' => $idInt,
                 ]);
 
-                if ($seoChanged) {
-                    $fields = [
-                        'seo_url' => $seoUrl,
-                        'changed' => 1,
-                        'changed_fields' => $mergedDiff !== [] ? $tracker->encodeDiff($mergedDiff) : '',
-                        'last_synced_at' => $now,
-                    ];
-                    $fileDbWriter->writeWarengruppe(
-                        (string)($item['name'] ?? ''),
-                        (string)$idInt,
-                        $fields,
-                        ['seo_url'],
-                        ['changed', 'changed_fields', 'last_synced_at']
-                    );
-                }
                 $updated++;
             }
             $pdo->commit();
@@ -524,5 +500,11 @@ final class WarengruppeSyncService
         $line = "[{$timestamp}] {$message}\n";
         $path = __DIR__ . '/../../../logs/app.log';
         @file_put_contents($path, $line, FILE_APPEND);
+    }
+
+    private function shouldApplyFileDbOnSync(): bool
+    {
+        $flag = strtolower((string)env('FILEDB_APPLY_ON_SYNC', 'false'));
+        return $flag === '1' || $flag === 'true' || $flag === 'yes';
     }
 }

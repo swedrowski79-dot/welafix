@@ -3,14 +3,13 @@ PRAGMA journal_mode = WAL;
 CREATE TABLE IF NOT EXISTS artikel (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   afs_artikel_id TEXT UNIQUE,
-  afs_key TEXT UNIQUE,
   artikelnummer TEXT,
-  name TEXT,
   warengruppe_id TEXT,
-  price REAL,
-  stock INTEGER,
-  online INTEGER,
   seo_url TEXT,
+  master_modell TEXT,
+  is_master INTEGER,
+  is_deleted INTEGER DEFAULT 0,
+  row_hash TEXT,
   changed_fields TEXT,
   last_synced_at TEXT,
   last_seen_at TEXT,
@@ -38,80 +37,42 @@ CREATE TABLE IF NOT EXISTS warengruppe (
 
 CREATE INDEX IF NOT EXISTS idx_warengruppe_changed ON warengruppe(changed);
 
-CREATE TABLE IF NOT EXISTS media_files (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  type TEXT,
-  rel_path TEXT UNIQUE,
-  abs_path TEXT,
-  size INTEGER,
-  mtime INTEGER,
-  checksum TEXT,
-  changed INTEGER DEFAULT 0,
-  last_seen_at TEXT
-);
-
-CREATE INDEX IF NOT EXISTS idx_media_changed ON media_files(changed);
-
-CREATE TABLE IF NOT EXISTS sync_runs (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  started_at TEXT,
-  finished_at TEXT,
-  status TEXT,
-  message TEXT
-);
-
 CREATE TABLE IF NOT EXISTS documents (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   source TEXT NOT NULL,
   source_id TEXT NOT NULL,
   doc_type TEXT NOT NULL,
-  doc_no TEXT,
-  doc_date TEXT,
-  customer_no TEXT,
-  total_gross REAL,
-  currency TEXT,
-  updated_at TEXT,
-  synced_at TEXT,
+  changed INTEGER DEFAULT 0,
   UNIQUE(source, source_id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_documents_doc_no ON documents(doc_no);
-CREATE INDEX IF NOT EXISTS idx_documents_doc_date ON documents(doc_date);
-
-CREATE TABLE IF NOT EXISTS document_items (
+CREATE TABLE IF NOT EXISTS media (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  document_id INTEGER NOT NULL,
-  line_no INTEGER NOT NULL,
-  article_no TEXT,
-  title TEXT,
-  qty REAL,
-  unit_price REAL,
-  total REAL,
-  vat REAL,
-  FOREIGN KEY(document_id) REFERENCES documents(id) ON DELETE CASCADE
+  filename TEXT NOT NULL,
+  source TEXT NULL,
+  created_at TEXT NULL,
+  type TEXT NULL,
+  storage_path TEXT NULL,
+  checksum TEXT NULL,
+  changed INTEGER DEFAULT 0,
+  last_checked_at TEXT NULL,
+  is_deleted INTEGER DEFAULT 0
 );
 
-CREATE INDEX IF NOT EXISTS idx_document_items_document_id ON document_items(document_id);
-CREATE INDEX IF NOT EXISTS idx_document_items_article_no ON document_items(article_no);
+DROP INDEX IF EXISTS idx_media_filename_nocase;
+DROP INDEX IF EXISTS idx_media_filename_source_nocase;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_media_filename_nocase ON media(lower(filename));
 
-CREATE TABLE IF NOT EXISTS document_files (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  document_id INTEGER NOT NULL,
-  file_name TEXT NOT NULL,
-  mime_type TEXT,
-  storage_path TEXT NOT NULL,
-  checksum TEXT,
-  created_at TEXT,
-  FOREIGN KEY(document_id) REFERENCES documents(id) ON DELETE CASCADE
+CREATE TABLE IF NOT EXISTS attributes (
+  attributes_id INTEGER PRIMARY KEY AUTOINCREMENT,
+  attributes_parent INTEGER NOT NULL DEFAULT 0,
+  attributes_model TEXT NOT NULL,
+  attributes_image TEXT NULL,
+  attributes_color INTEGER NOT NULL DEFAULT 0,
+  sort_order INTEGER NOT NULL DEFAULT 1,
+  status INTEGER NOT NULL DEFAULT 1,
+  attributes_templates_id INTEGER NOT NULL DEFAULT 1,
+  bw_id INTEGER NOT NULL DEFAULT 0
 );
-
-CREATE INDEX IF NOT EXISTS idx_document_files_document_id ON document_files(document_id);
-
-CREATE TABLE IF NOT EXISTS change_history (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  entity_type TEXT NOT NULL,
-  entity_key TEXT NOT NULL,
-  changed_at TEXT NOT NULL,
-  diff_json TEXT NOT NULL,
-  source TEXT NULL
-);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_attributes_parent_model_nocase
+ON attributes(attributes_parent, lower(attributes_model));

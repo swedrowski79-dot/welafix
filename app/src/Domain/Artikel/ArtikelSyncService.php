@@ -10,7 +10,8 @@ use Welafix\Config\MappingService;
 use Welafix\Database\ConnectionFactory;
 use Welafix\Database\Db;
 use Welafix\Database\SchemaSyncService;
-use Welafix\Domain\FileDb\FileDbWriter;
+use Welafix\Domain\Attribute\AttributesBuilder;
+use Welafix\Domain\FileDb\FileDbTemplateApplier;
 use Welafix\Infrastructure\Sqlite\SqliteSchemaHelper;
 
 final class ArtikelSyncService
@@ -47,7 +48,7 @@ final class ArtikelSyncService
         $sqliteRepo = new ArtikelRepositorySqlite($pdo);
         $sqliteRepo->ensureTable();
 
-        $batchSize = max(1, min(1000, $batchSize));
+        $batchSize = max(1, min(10000, $batchSize));
         $seenAt = (new DateTimeImmutable('now', new DateTimeZone('UTC')))->format(DATE_ATOM);
 
         $mapping = $this->loadArtikelMapping();
@@ -88,12 +89,20 @@ final class ArtikelSyncService
                 }
             }
 
-            $extraKeys = array_values(array_unique(array_merge($this->getRawFieldNames($selectFields), ['seo_url'])));
+            $extraKeys = array_values(array_unique(array_merge(
+                $this->getRawFieldNames($selectFields),
+                ['seo_url', 'master_modell', 'is_master']
+            )));
             sort($extraKeys, SORT_STRING);
             $diffColumns = $extraKeys;
 
             $wgSeoMap = $this->loadWarengruppeSeoMap($pdo);
-            $fileDbWriter = new FileDbWriter();
+            $applyFileDb = $this->shouldApplyFileDbOnSync();
+            $fileDbApplier = $applyFileDb ? new FileDbTemplateApplier() : null;
+            $attributesBuilder = new AttributesBuilder($pdo);
+            $masterCount = 0;
+            $slaveCount = 0;
+            $normalCount = 0;
 
             foreach ($rows as $row) {
                 $row = array_intersect_key($row, $allowedLookup);
@@ -132,6 +141,12 @@ final class ArtikelSyncService
                         $warengruppeId = $this->optionalIntField($row['Warengruppe'] ?? null);
 
                         $extras = $this->fillMissingExtras($prepared['extras'], $extraKeys);
+                        $rawLangtext = (string)($row['Langtext'] ?? '');
+                        if ($rawLangtext !== '') {
+                            $converted = rtfToHtmlSimple($rawLangtext);
+                            $row['Langtext'] = $converted;
+                            $extras['Langtext'] = $converted;
+                        }
 
                         $artikelSlug = strtolower(xt_filterAutoUrlText_inline($name, 'de'));
                         $wgSeo = '';
@@ -146,15 +161,23 @@ final class ArtikelSyncService
                         }
                         $extras['seo_url'] = rtrim($wgSeo, '/') . ($artikelSlug !== '' ? '/' . $artikelSlug : '');
 
+                        $masterInfo = $this->resolveMasterInfo($row['Zusatzfeld07'] ?? null);
+                        $extras['master_modell'] = $masterInfo['master_modell'];
+                        $extras['is_master'] = $masterInfo['is_master'] ? 1 : null;
+                        if ($masterInfo['is_master']) {
+                            $masterCount++;
+                        } elseif ($masterInfo['master_modell'] !== null) {
+                            $slaveCount++;
+                        } else {
+                            $normalCount++;
+                        }
+
                         $data = [
                             'afs_artikel_id' => $afsArtikelId,
-                            'afs_key' => $afsArtikelId,
                             'artikelnummer' => $artikelnummer,
-                            'name' => $name,
                             'warengruppe_id' => $warengruppeId,
-                            'price' => (float)($row['VK3'] ?? 0),
-                            'stock' => (int)($row['Bestand'] ?? 0),
-                            'online' => (int)($row['Internet'] ?? 0),
+                            'master_modell' => $masterInfo['master_modell'],
+                            'is_master' => $masterInfo['is_master'] ? 1 : null,
                         ];
 
                         $rowHash = $this->computeRowHash($data, $extras);
@@ -163,20 +186,21 @@ final class ArtikelSyncService
                         if ($result['inserted']) $batchStats['inserted']++;
                         if ($result['updated']) $batchStats['updated']++;
                         if ($result['unchanged']) $batchStats['unchanged']++;
+                        $batchStats['masters'] = $masterCount;
+                        $batchStats['slaves'] = $slaveCount;
+                        $batchStats['normal'] = $normalCount;
 
-                        $diff = $result['diff'] ?? [];
-                        if ($diff !== []) {
-                            $fields = $extras;
-                            $fields['changed'] = 1;
-                            $fields['changed_fields'] = $sqliteRepo->encodeDiff($diff);
-                            $fields['last_synced_at'] = $seenAt;
-                            $fileDbWriter->writeArtikel(
-                                $artikelnummer,
-                                $fields,
-                                array_keys($diff),
-                                ['changed', 'changed_fields', 'last_synced_at']
-                            );
+                        if ($fileDbApplier) {
+                            $context = array_merge($row, $extras);
+                            $context['Artikelnummer'] = $artikelnummer;
+                            $context['Bezeichnung'] = $name;
+                            $context['Warengruppe'] = $warengruppeId;
+                        $context['seo_url'] = $extras['seo_url'] ?? null;
+                        $fileDbApplier->applyArtikel($pdo, $artikelnummer, $context);
                         }
+
+                        $attributesBuilder->ingestRow($row);
+
                     } catch (\Throwable $e) {
                         $batchStats['errors_count']++;
                         $this->lastContext = [
@@ -190,6 +214,8 @@ final class ArtikelSyncService
                 $lastRow = end($rows);
                 $batchStats['last_key'] = isset($lastRow[$keyField]) ? (string)$lastRow[$keyField] : $afterKey;
                 $pdo->commit();
+                $batchStats['attributes_parents_created'] = $attributesBuilder->parentsCreated;
+                $batchStats['attributes_children_created'] = $attributesBuilder->childrenCreated;
             } catch (\Throwable $e) {
                 $pdo->rollBack();
                 throw $e;
@@ -197,6 +223,10 @@ final class ArtikelSyncService
         }
 
         $state = $this->updateState($pdo, $batchStats, $rows === []);
+        if ((bool)$state['done']) {
+            $deleted = $this->markDeletedMissing($pdo, (string)($state['started_at'] ?? ''));
+            $batchStats['deleted_marked'] = $deleted;
+        }
 
         return [
             'done' => (bool)$state['done'],
@@ -209,6 +239,7 @@ final class ArtikelSyncService
             'errors_count' => (int)$state['errors_count'],
             'batches' => (int)$state['batches'],
             'last_key' => (string)$state['last_key'],
+            'deleted_marked' => $batchStats['deleted_marked'] ?? 0,
         ];
     }
 
@@ -273,6 +304,12 @@ final class ArtikelSyncService
         $line = "[{$timestamp}] {$message}\n";
         $path = __DIR__ . '/../../../logs/app.log';
         @file_put_contents($path, $line, FILE_APPEND);
+    }
+
+    private function shouldApplyFileDbOnSync(): bool
+    {
+        $flag = strtolower((string)env('FILEDB_APPLY_ON_SYNC', 'false'));
+        return $flag === '1' || $flag === 'true' || $flag === 'yes';
     }
 
     private function logMissingWarengruppeOnce(int $warengruppeId, string $artikelnummer): void
@@ -412,6 +449,22 @@ final class ArtikelSyncService
         return '"' . str_replace('"', '""', $name) . '"';
     }
 
+    private function markDeletedMissing(\PDO $pdo, string $startedAt): int
+    {
+        if ($startedAt === '') {
+            return 0;
+        }
+        $stmt = $pdo->prepare(
+            'UPDATE artikel
+             SET is_deleted = 1,
+                 changed = 1
+             WHERE (last_seen_at IS NULL OR last_seen_at < :started_at)
+               AND (is_deleted IS NULL OR is_deleted = 0)'
+        );
+        $stmt->execute([':started_at' => $startedAt]);
+        return $stmt->rowCount();
+    }
+
     private function loadArtikelMapping(): array
     {
         $mappingLoader = new \Welafix\Config\MappingLoader();
@@ -440,16 +493,13 @@ final class ArtikelSyncService
     {
         $columns = [
             'afs_artikel_id' => 'TEXT',
-            'afs_key' => 'TEXT',
             'artikelnummer' => 'TEXT',
-            'name' => 'TEXT',
             'warengruppe_id' => 'INTEGER',
-            'price' => 'REAL',
-            'stock' => 'INTEGER',
-            'online' => 'INTEGER',
             'last_seen_at' => 'TEXT',
             'row_hash' => 'TEXT',
             'seo_url' => 'TEXT',
+            'master_modell' => 'TEXT',
+            'is_master' => 'INTEGER',
         ];
 
         $numericInt = ['Artikel', 'Art', 'Bestand', 'Warengruppe', 'Zusatzfeld01'];
@@ -465,22 +515,6 @@ final class ArtikelSyncService
             }
         }
         return $columns;
-    }
-
-    /**
-     * @return array<string, string>
-     */
-    private function getMappedFields(): array
-    {
-        return [
-            'Artikel' => 'afs_artikel_id',
-            'Artikelnummer' => 'artikelnummer',
-            'Bezeichnung' => 'name',
-            'Warengruppe' => 'warengruppe_id',
-            'VK3' => 'price',
-            'Bestand' => 'stock',
-            'Internet' => 'online',
-        ];
     }
 
     /**
@@ -507,30 +541,6 @@ final class ArtikelSyncService
     }
 
     /**
-     * @param array<int, string> $rawFieldNames
-     * @param array<int, array<string, mixed>> $preparedRows
-     * @return array<int, string>
-     */
-    private function buildExtraKeys(array $rawFieldNames, array $preparedRows): array
-    {
-        $keys = [];
-        foreach ($rawFieldNames as $field) {
-            $keys[strtolower($field)] = $field;
-        }
-        foreach ($preparedRows as $prepared) {
-            if (!isset($prepared['extras']) || !is_array($prepared['extras'])) {
-                continue;
-            }
-            foreach (array_keys($prepared['extras']) as $field) {
-                $keys[strtolower($field)] = $field;
-            }
-        }
-        $extraKeys = array_values($keys);
-        sort($extraKeys, SORT_STRING);
-        return $extraKeys;
-    }
-
-    /**
      * @param array<string, mixed> $extras
      * @param array<int, string> $extraKeys
      * @return array<string, mixed>
@@ -543,6 +553,21 @@ final class ArtikelSyncService
             }
         }
         return $extras;
+    }
+
+    /**
+     * @return array{is_master:bool, master_modell: ?string}
+     */
+    private function resolveMasterInfo(mixed $raw): array
+    {
+        $value = trim((string)($raw ?? ''));
+        if ($value === '') {
+            return ['is_master' => false, 'master_modell' => null];
+        }
+        if (strcasecmp($value, 'master') === 0) {
+            return ['is_master' => true, 'master_modell' => null];
+        }
+        return ['is_master' => false, 'master_modell' => $value];
     }
 
     /**

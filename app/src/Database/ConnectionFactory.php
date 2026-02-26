@@ -13,7 +13,6 @@ final class ConnectionFactory
 {
     private ?PDO $sqlite = null;
     private ?PDO $mssql = null;
-    private ?PDO $media = null;
 
     public function sqlite(): PDO
     {
@@ -63,21 +62,6 @@ final class ConnectionFactory
         return $pdo;
     }
 
-    public function media(): PDO
-    {
-        if ($this->media) return $this->media;
-
-        $path = (string)env('MEDIA_DB_PATH', __DIR__ . '/../../storage/media.db');
-        $dir = dirname($path);
-        if (!is_dir($dir)) {
-            mkdir($dir, 0777, true);
-        }
-
-        $pdo = new PDO('sqlite:' . $path);
-        $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
-        $this->media = $pdo;
-        return $pdo;
-    }
 
     public function ensureSqliteMigrated(): void
     {
@@ -94,13 +78,12 @@ final class ConnectionFactory
         }
 
         $this->ensureColumns($pdo, 'artikel', [
-            'afs_key' => 'TEXT',
             'afs_artikel_id' => 'TEXT',
             'warengruppe_id' => 'TEXT',
-            'price' => 'REAL',
-            'stock' => 'INTEGER',
-            'online' => 'INTEGER',
             'seo_url' => 'TEXT',
+            'master_modell' => 'TEXT',
+            'is_master' => 'INTEGER',
+            'is_deleted' => 'INTEGER DEFAULT 0',
             'changed_fields' => 'TEXT',
             'last_synced_at' => 'TEXT',
             'last_seen_at' => 'TEXT',
@@ -125,45 +108,17 @@ final class ConnectionFactory
         ]);
 
         $this->ensureDocumentSchema($pdo);
-        $this->ensureChangeHistory($pdo);
-    }
-
-    public function ensureMediaMigrated(): void
-    {
-        $pdo = $this->media();
-
-        $pdo->exec(
-            'CREATE TABLE IF NOT EXISTS media_assets (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                source TEXT NOT NULL,
-                source_key TEXT NOT NULL,
-                asset_type TEXT NOT NULL,
-                filename TEXT NULL,
-                mime_type TEXT NULL,
-                storage_path TEXT NOT NULL,
-                checksum TEXT NULL,
-                size_bytes INTEGER NULL,
-                updated_at TEXT NULL,
-                created_at TEXT NOT NULL,
-                UNIQUE(source, source_key)
-            )'
-        );
-
-        $pdo->exec(
-            'CREATE TABLE IF NOT EXISTS media_links (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                asset_id INTEGER NOT NULL,
-                entity_type TEXT NOT NULL,
-                entity_id TEXT NOT NULL,
-                field_name TEXT NULL,
-                FOREIGN KEY(asset_id) REFERENCES media_assets(id) ON DELETE CASCADE
-            )'
-        );
-
-        $pdo->exec('CREATE INDEX IF NOT EXISTS idx_media_links_entity ON media_links(entity_type, entity_id)');
-        $pdo->exec('CREATE INDEX IF NOT EXISTS idx_media_assets_type ON media_assets(asset_type)');
-        $pdo->exec('CREATE INDEX IF NOT EXISTS idx_media_assets_checksum ON media_assets(checksum)');
-        $pdo->exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_media_links_unique ON media_links(asset_id, entity_type, entity_id, field_name)');
+        $this->ensureMediaFilenameTable($pdo);
+        $this->ensureColumns($pdo, 'media', [
+            'type' => 'TEXT',
+            'storage_path' => 'TEXT',
+            'checksum' => 'TEXT',
+            'changed' => 'INTEGER DEFAULT 0',
+            'last_checked_at' => 'TEXT',
+            'is_deleted' => 'INTEGER DEFAULT 0',
+        ]);
+        $this->ensureDocumentsExtra($pdo);
+        $this->ensureAttributesSchema($pdo);
     }
 
     /**
@@ -196,63 +151,51 @@ final class ConnectionFactory
                 source TEXT NOT NULL,
                 source_id TEXT NOT NULL,
                 doc_type TEXT NOT NULL,
-                doc_no TEXT,
-                doc_date TEXT,
-                customer_no TEXT,
-                total_gross REAL,
-                currency TEXT,
-                updated_at TEXT,
-                synced_at TEXT,
+                changed INTEGER DEFAULT 0,
                 UNIQUE(source, source_id)
             )'
         );
-
-        $pdo->exec('CREATE INDEX IF NOT EXISTS idx_documents_doc_no ON documents(doc_no)');
-        $pdo->exec('CREATE INDEX IF NOT EXISTS idx_documents_doc_date ON documents(doc_date)');
-
-        $pdo->exec(
-            'CREATE TABLE IF NOT EXISTS document_items (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                document_id INTEGER NOT NULL,
-                line_no INTEGER NOT NULL,
-                article_no TEXT,
-                title TEXT,
-                qty REAL,
-                unit_price REAL,
-                total REAL,
-                vat REAL,
-                FOREIGN KEY(document_id) REFERENCES documents(id) ON DELETE CASCADE
-            )'
-        );
-        $pdo->exec('CREATE INDEX IF NOT EXISTS idx_document_items_document_id ON document_items(document_id)');
-        $pdo->exec('CREATE INDEX IF NOT EXISTS idx_document_items_article_no ON document_items(article_no)');
-
-        $pdo->exec(
-            'CREATE TABLE IF NOT EXISTS document_files (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                document_id INTEGER NOT NULL,
-                file_name TEXT NOT NULL,
-                mime_type TEXT,
-                storage_path TEXT NOT NULL,
-                checksum TEXT,
-                created_at TEXT,
-                FOREIGN KEY(document_id) REFERENCES documents(id) ON DELETE CASCADE
-            )'
-        );
-        $pdo->exec('CREATE INDEX IF NOT EXISTS idx_document_files_document_id ON document_files(document_id)');
     }
 
-    private function ensureChangeHistory(PDO $pdo): void
+    private function ensureMediaFilenameTable(PDO $pdo): void
     {
         $pdo->exec(
-            'CREATE TABLE IF NOT EXISTS change_history (
+            'CREATE TABLE IF NOT EXISTS media (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                entity_type TEXT NOT NULL,
-                entity_key TEXT NOT NULL,
-                changed_at TEXT NOT NULL,
-                diff_json TEXT NOT NULL,
-                source TEXT NULL
+                filename TEXT NOT NULL,
+                source TEXT NULL,
+                created_at TEXT NULL
             )'
+        );
+        $pdo->exec('DROP INDEX IF EXISTS idx_media_filename_source_nocase');
+        $pdo->exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_media_filename_nocase ON media(lower(filename))');
+    }
+
+    private function ensureDocumentsExtra(PDO $pdo): void
+    {
+        $this->ensureColumns($pdo, 'documents', [
+            'changed' => 'INTEGER DEFAULT 0',
+        ]);
+    }
+
+    private function ensureAttributesSchema(PDO $pdo): void
+    {
+        $pdo->exec(
+            'CREATE TABLE IF NOT EXISTS attributes (
+                attributes_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                attributes_parent INTEGER NOT NULL DEFAULT 0,
+                attributes_model TEXT NOT NULL,
+                attributes_image TEXT NULL,
+                attributes_color INTEGER NOT NULL DEFAULT 0,
+                sort_order INTEGER NOT NULL DEFAULT 1,
+                status INTEGER NOT NULL DEFAULT 1,
+                attributes_templates_id INTEGER NOT NULL DEFAULT 1,
+                bw_id INTEGER NOT NULL DEFAULT 0
+            )'
+        );
+        $pdo->exec(
+            'CREATE UNIQUE INDEX IF NOT EXISTS idx_attributes_parent_model_nocase
+             ON attributes(attributes_parent, lower(attributes_model))'
         );
     }
 

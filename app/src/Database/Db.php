@@ -48,16 +48,10 @@ final class Db
         return $pdo;
     }
 
-    public static function media(): PDO
-    {
-        return self::factory()->media();
-    }
-
     public static function ensureMigrated(): void
     {
         $factory = self::factory();
         $factory->ensureSqliteMigrated();
-        $factory->ensureMediaMigrated();
     }
 
     private static function factory(): ConnectionFactory

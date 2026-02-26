@@ -3,8 +3,6 @@ declare(strict_types=1);
 
 namespace Welafix\Domain\ChangeTracking;
 
-use PDO;
-
 final class ChangeTracker
 {
     /**
@@ -41,27 +39,4 @@ final class ChangeTracker
         return $json;
     }
 
-    /**
-     * @param array<string, array{old:mixed,new:mixed}> $diff
-     */
-    public function writeHistory(PDO $pdo, string $entityType, string $entityKey, string $changedAt, array $diff, ?string $source): void
-    {
-        if ($diff === []) {
-            return;
-        }
-        $stmt = $pdo->prepare(
-            'INSERT INTO change_history (entity_type, entity_key, changed_at, diff_json, source)
-             VALUES (:entity_type, :entity_key, :changed_at, :diff_json, :source)'
-        );
-        $stmt->bindValue(':entity_type', $entityType, PDO::PARAM_STR);
-        $stmt->bindValue(':entity_key', $entityKey, PDO::PARAM_STR);
-        $stmt->bindValue(':changed_at', $changedAt, PDO::PARAM_STR);
-        $stmt->bindValue(':diff_json', $this->encodeDiff($diff), PDO::PARAM_STR);
-        if ($source === null || $source === '') {
-            $stmt->bindValue(':source', null, PDO::PARAM_NULL);
-        } else {
-            $stmt->bindValue(':source', $source, PDO::PARAM_STR);
-        }
-        $stmt->execute();
-    }
 }
