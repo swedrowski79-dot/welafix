@@ -63,6 +63,11 @@ DROP INDEX IF EXISTS idx_media_filename_nocase;
 DROP INDEX IF EXISTS idx_media_filename_source_nocase;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_media_filename_nocase ON media(lower(filename));
 
+CREATE TABLE IF NOT EXISTS settings (
+  key TEXT PRIMARY KEY,
+  value TEXT
+);
+
 CREATE TABLE IF NOT EXISTS attributes (
   attributes_id INTEGER PRIMARY KEY AUTOINCREMENT,
   attributes_parent INTEGER NOT NULL DEFAULT 0,

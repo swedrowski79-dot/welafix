@@ -401,6 +401,83 @@ final class ApiController
         ]);
     }
 
+    public function settings(): void
+    {
+        $pdo = $this->factory->sqlite();
+        $pdo->exec('CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)');
+
+        $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
+        if ($method === 'POST') {
+            $key = $_POST['key'] ?? '';
+            $value = $_POST['value'] ?? '';
+            $key = trim((string)$key);
+            $value = trim((string)$value);
+            if ($key === '') {
+                $this->jsonResponse(['ok' => false, 'error' => 'key fehlt'], 400);
+                return;
+            }
+            $stmt = $pdo->prepare('INSERT INTO settings (key, value) VALUES (:key, :value)
+                ON CONFLICT(key) DO UPDATE SET value = :value');
+            $stmt->execute([':key' => $key, ':value' => $value]);
+            $this->jsonResponse(['ok' => true, 'key' => $key, 'value' => $value]);
+            return;
+        }
+
+        $key = isset($_GET['key']) ? trim((string)$_GET['key']) : '';
+        if ($key === '') {
+            $this->jsonResponse(['ok' => false, 'error' => 'key fehlt'], 400);
+            return;
+        }
+        $stmt = $pdo->prepare('SELECT value FROM settings WHERE key = :key');
+        $stmt->execute([':key' => $key]);
+        $value = $stmt->fetchColumn();
+        $this->jsonResponse(['ok' => true, 'key' => $key, 'value' => $value !== false ? (string)$value : null]);
+    }
+
+    public function xtSchemaTables(): void
+    {
+        try {
+            $service = new \Welafix\Domain\Xt\XtTableImportService();
+            $tables = $service->fetchTables();
+            $this->jsonResponse(['ok' => true, 'tables' => $tables]);
+        } catch (\Throwable $e) {
+            $this->jsonResponse(['ok' => false, 'error' => $e->getMessage()], 500);
+        }
+    }
+
+    public function xtSchemaTable(): void
+    {
+        $table = isset($_GET['table']) ? (string)$_GET['table'] : '';
+        if ($table === '') {
+            $this->jsonResponse(['ok' => false, 'error' => 'table fehlt'], 400);
+            return;
+        }
+        try {
+            $service = new \Welafix\Domain\Xt\XtTableImportService();
+            $schema = $service->fetchTableSchema($table);
+            $this->jsonResponse(['ok' => true, 'schema' => $schema]);
+        } catch (\Throwable $e) {
+            $this->jsonResponse(['ok' => false, 'error' => $e->getMessage()], 500);
+        }
+    }
+
+    public function xtImportTable(): void
+    {
+        $table = isset($_POST['table']) ? (string)$_POST['table'] : '';
+        $pageSize = isset($_POST['page_size']) ? (int)$_POST['page_size'] : 2000;
+        if ($table === '') {
+            $this->jsonResponse(['ok' => false, 'error' => 'table fehlt'], 400);
+            return;
+        }
+        try {
+            $service = new \Welafix\Domain\Xt\XtTableImportService();
+            $stats = $service->importTable($table, $pageSize);
+            $this->jsonResponse($stats);
+        } catch (\Throwable $e) {
+            $this->jsonResponse(['ok' => false, 'error' => $e->getMessage()], 500);
+        }
+    }
+
     public function mediaUsage(): void
     {
         $filename = isset($_GET['filename']) ? trim((string)$_GET['filename']) : '';

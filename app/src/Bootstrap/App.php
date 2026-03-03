@@ -149,6 +149,40 @@ final class App
             (new ApiController($factory))->xtApiCheck();
             return;
         }
+        if ($path === '/api/settings') {
+            (new ApiController($factory))->settings();
+            return;
+        }
+        if ($path === '/api/xt/schema/tables') {
+            (new ApiController($factory))->xtSchemaTables();
+            return;
+        }
+        if ($path === '/api/xt/schema/table') {
+            (new ApiController($factory))->xtSchemaTable();
+            return;
+        }
+        if ($path === '/api/xt/import-table') {
+            (new ApiController($factory))->xtImportTable();
+            return;
+        }
+        if ($path === '/sync/xt') {
+            header('Content-Type: application/json');
+            try {
+                $mappingName = isset($_GET['mapping']) ? (string)$_GET['mapping'] : '';
+                if ($mappingName === '') {
+                    echo json_encode(['ok' => false, 'error' => 'mapping fehlt']);
+                    return;
+                }
+                $pageSize = isset($_GET['page_size']) ? (int)$_GET['page_size'] : 500;
+                $service = new \Welafix\Domain\Xt\XtImportService();
+                $stats = $service->import($mappingName, $pageSize);
+                echo json_encode($stats);
+            } catch (\Throwable $e) {
+                http_response_code(500);
+                echo json_encode(['ok' => false, 'error' => $e->getMessage()]);
+            }
+            return;
+        }
 
         if ($path === '/sync/warengruppe') {
             header('Content-Type: application/json');

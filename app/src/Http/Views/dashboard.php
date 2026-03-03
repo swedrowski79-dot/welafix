@@ -40,6 +40,11 @@ declare(strict_types=1);
           <option value="10000">10000</option>
         </select>
       </div>
+      <div class="inline-controls">
+        <label for="xt-batch">XT Batchgröße</label>
+        <input id="xt-batch" type="number" min="50" max="5000" step="50" value="500" />
+        <button class="btn" type="button" id="xt-batch-save">Speichern</button>
+      </div>
     </div>
     <div class="tile">
       <div class="tile-label">Tools</div>
@@ -47,6 +52,7 @@ declare(strict_types=1);
       <button class="btn" type="button" data-endpoint="/api/filedb/check">FileDB Check</button>
       <button class="btn" type="button" data-endpoint="/api/filedb/apply">FileDB Apply</button>
       <button class="btn" type="button" data-endpoint="/migrate.php">Migration</button>
+      <button class="btn" type="button" id="xt-import-open">XT-Commerce Tabellen Import</button>
     </div>
   </div>
 </div>
@@ -54,6 +60,34 @@ declare(strict_types=1);
 <div class="card">
   <h2>Output</h2>
   <pre id="out" class="log">Klicke einen Button, um eine API-Antwort zu sehen.</pre>
+</div>
+
+<div id="xt-modal" class="xt-modal hidden">
+  <div class="xt-modal-backdrop"></div>
+  <div class="xt-modal-panel">
+    <div class="xt-modal-header">
+      <strong>XT-Commerce Tabellen Import</strong>
+      <button class="btn" type="button" id="xt-import-close">Schließen</button>
+    </div>
+    <div class="xt-modal-body">
+      <div class="inline-controls">
+        <label for="xt-table">XT Tabelle</label>
+        <select id="xt-table"></select>
+      </div>
+      <div class="inline-controls">
+        <label for="xt-page-size">Batch Size</label>
+        <select id="xt-page-size">
+          <option value="500">500</option>
+          <option value="1000">1000</option>
+          <option value="2000" selected>2000</option>
+          <option value="5000">5000</option>
+          <option value="10000">10000</option>
+        </select>
+        <button class="btn" type="button" id="xt-import-start">Import starten</button>
+      </div>
+      <pre id="xt-import-status" class="log">Bereit.</pre>
+    </div>
+  </div>
 </div>
 
 <script>
@@ -162,6 +196,93 @@ declare(strict_types=1);
       cancelBtn.disabled = true;
       cancelRequested = false;
     };
+
+    const loadXtBatch = async () => {
+      try {
+        const res = await fetch('/api/settings?key=xt_import_batch_size');
+        const json = await res.json();
+        if (json && json.ok && json.value) {
+          document.getElementById('xt-batch').value = json.value;
+        }
+      } catch (e) {}
+    };
+
+    const saveXtBatch = async () => {
+      const input = document.getElementById('xt-batch');
+      let value = parseInt(input.value, 10);
+      if (isNaN(value)) value = 500;
+      if (value < 50) value = 50;
+      if (value > 5000) value = 5000;
+      input.value = value;
+      const body = new URLSearchParams();
+      body.set('key', 'xt_import_batch_size');
+      body.set('value', String(value));
+      try {
+        const res = await fetch('/api/settings', { method: 'POST', body });
+        const json = await res.json();
+        setOutput(JSON.stringify(json, null, 2));
+      } catch (e) {
+        setOutput('Fehler: ' + e.message);
+      }
+    };
+
+    document.getElementById('xt-batch-save').addEventListener('click', saveXtBatch);
+    loadXtBatch();
+
+    const modal = document.getElementById('xt-modal');
+    const modalStatus = document.getElementById('xt-import-status');
+    const xtTableSelect = document.getElementById('xt-table');
+
+    const openModal = async () => {
+      modal.classList.remove('hidden');
+      modalStatus.textContent = 'Lade Tabellenliste...';
+      try {
+        const res = await fetch('/api/xt/schema/tables');
+        const json = await res.json();
+        xtTableSelect.innerHTML = '';
+        if (json.ok && Array.isArray(json.tables)) {
+          json.tables.forEach((t) => {
+            const opt = document.createElement('option');
+            opt.value = t;
+            opt.textContent = t;
+            xtTableSelect.appendChild(opt);
+          });
+          modalStatus.textContent = 'Bereit.';
+        } else {
+          modalStatus.textContent = 'Fehler: ' + (json.error || 'keine Tabellen');
+        }
+      } catch (e) {
+        modalStatus.textContent = 'Fehler: ' + e.message;
+      }
+    };
+
+    const closeModal = () => {
+      modal.classList.add('hidden');
+    };
+
+    const startImport = async () => {
+      const table = xtTableSelect.value;
+      const pageSize = document.getElementById('xt-page-size').value;
+      if (!table) {
+        modalStatus.textContent = 'Bitte Tabelle auswählen.';
+        return;
+      }
+      modalStatus.textContent = 'Import läuft...';
+      const body = new URLSearchParams();
+      body.set('table', table);
+      body.set('page_size', pageSize);
+      try {
+        const res = await fetch('/api/xt/import-table', { method: 'POST', body });
+        const json = await res.json();
+        modalStatus.textContent = JSON.stringify(json, null, 2);
+      } catch (e) {
+        modalStatus.textContent = 'Fehler: ' + e.message;
+      }
+    };
+
+    document.getElementById('xt-import-open').addEventListener('click', openModal);
+    document.getElementById('xt-import-close').addEventListener('click', closeModal);
+    document.getElementById('xt-import-start').addEventListener('click', startImport);
 
     cancelBtn.addEventListener('click', () => {
       cancelRequested = true;

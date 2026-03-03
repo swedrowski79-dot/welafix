@@ -119,6 +119,7 @@ final class ConnectionFactory
         ]);
         $this->ensureDocumentsExtra($pdo);
         $this->ensureAttributesSchema($pdo);
+        $this->ensureSettingsTable($pdo);
     }
 
     /**
@@ -196,6 +197,16 @@ final class ConnectionFactory
         $pdo->exec(
             'CREATE UNIQUE INDEX IF NOT EXISTS idx_attributes_parent_model_nocase
              ON attributes(attributes_parent, lower(attributes_model))'
+        );
+    }
+
+    private function ensureSettingsTable(PDO $pdo): void
+    {
+        $pdo->exec(
+            'CREATE TABLE IF NOT EXISTS settings (
+                key TEXT PRIMARY KEY,
+                value TEXT
+            )'
         );
     }
 

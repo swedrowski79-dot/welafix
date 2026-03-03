@@ -54,6 +54,12 @@ declare(strict_types=1);
     .pagination { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
     .paginator-bar { position: sticky; bottom: 0; background: var(--card); padding-top: 10px; }
     .muted { color: var(--muted); }
+    .xt-modal.hidden { display: none; }
+    .xt-modal { position: fixed; inset: 0; z-index: 50; }
+    .xt-modal-backdrop { position: absolute; inset: 0; background: rgba(15,23,42,0.4); }
+    .xt-modal-panel { position: relative; max-width: 720px; margin: 80px auto; background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 16px; box-shadow: 0 12px 30px rgba(15,23,42,0.2); }
+    .xt-modal-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+    .xt-modal-body .log { min-height: 120px; }
   </style>
 </head>
 <body>
