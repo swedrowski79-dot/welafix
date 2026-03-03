@@ -58,7 +58,9 @@ declare(strict_types=1);
       q: '',
       page: 1,
       perPage: 50,
-      totalRows: 0
+      totalRows: 0,
+      sort: '',
+      dir: 'asc'
     };
 
     const setLoading = (isLoading) => {
@@ -87,7 +89,17 @@ declare(strict_types=1);
       const headRow = document.createElement('tr');
       columns.forEach((col) => {
         const th = document.createElement('th');
-        th.textContent = col;
+        const isActive = state.sort === col;
+        const nextDir = isActive && state.dir === 'asc' ? 'desc' : 'asc';
+        const arrow = isActive ? (state.dir === 'asc' ? ' ↑' : ' ↓') : '';
+        th.textContent = col + arrow;
+        th.style.cursor = 'pointer';
+        th.addEventListener('click', async () => {
+          state.sort = col;
+          state.dir = nextDir;
+          state.page = 1;
+          await loadTableData();
+        });
         headRow.appendChild(th);
       });
       thead.appendChild(headRow);
@@ -174,6 +186,10 @@ declare(strict_types=1);
         per_page: String(state.perPage)
       });
       params.set('all', '1');
+      if (state.sort) {
+        params.set('sort', state.sort);
+        params.set('dir', state.dir);
+      }
       if (state.q) {
         params.set('q', state.q);
       }
@@ -186,6 +202,8 @@ declare(strict_types=1);
         }
 
         state.totalRows = json.totalRows || 0;
+        state.sort = json.sort || state.sort;
+        state.dir = json.dir || state.dir;
         renderTable(json.columns || [], json.rows || []);
         renderPaginator();
       } catch (e) {

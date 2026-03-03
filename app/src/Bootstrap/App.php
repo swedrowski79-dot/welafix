@@ -183,6 +183,18 @@ final class App
             }
             return;
         }
+        if ($path === '/sync/xt-mapping') {
+            header('Content-Type: application/json');
+            try {
+                $service = new \Welafix\Domain\Xt\XtMappingSyncService();
+                $stats = $service->run('welafix_xt');
+                echo json_encode($stats);
+            } catch (\Throwable $e) {
+                http_response_code(500);
+                echo json_encode(['ok' => false, 'error' => $e->getMessage()]);
+            }
+            return;
+        }
 
         if ($path === '/sync/warengruppe') {
             header('Content-Type: application/json');

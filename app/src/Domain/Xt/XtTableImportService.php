@@ -164,7 +164,8 @@ final class XtTableImportService
         }
 
         $ts = (string)time();
-        $baseString = $method . "\n" . $path . "\n" . $ts . "\n";
+        $signPath = parse_url($url, PHP_URL_PATH) ?: $path;
+        $baseString = $method . "\n" . $signPath . "\n" . $ts . "\n";
         $sig = hash_hmac('sha256', $baseString, $key);
 
         $ch = curl_init($url);

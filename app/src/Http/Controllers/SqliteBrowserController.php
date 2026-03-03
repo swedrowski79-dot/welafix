@@ -91,6 +91,11 @@ final class SqliteBrowserController
             }
 
             $q = isset($_GET['q']) ? trim((string)$_GET['q']) : '';
+            $sort = isset($_GET['sort']) ? trim((string)$_GET['sort']) : '';
+            $dir = isset($_GET['dir']) ? strtolower((string)$_GET['dir']) : 'asc';
+            if ($dir !== 'asc' && $dir !== 'desc') {
+                $dir = 'asc';
+            }
             $page = isset($_GET['page']) ? (int)$_GET['page'] : 1;
             $perPage = isset($_GET['per_page']) ? (int)$_GET['per_page'] : 50;
             $page = max(1, $page);
@@ -108,6 +113,13 @@ final class SqliteBrowserController
             if ($whereSql !== '') {
                 $selectSql .= ' WHERE ' . $whereSql;
                 $countSql .= ' WHERE ' . $whereSql;
+            }
+            if ($sort !== '') {
+                $lower = strtolower($sort);
+                $allowedCols = array_change_key_case(array_flip($columns), CASE_LOWER);
+                if (isset($allowedCols[$lower])) {
+                    $selectSql .= ' ORDER BY ' . $this->quoteIdentifier($sort) . ' ' . strtoupper($dir);
+                }
             }
             $selectSql .= ' LIMIT :limit OFFSET :offset';
 
@@ -135,6 +147,8 @@ final class SqliteBrowserController
                 'per_page' => $perPage,
                 'totalRows' => $totalRows,
                 'query' => $q,
+                'sort' => $sort,
+                'dir' => $dir,
             ]);
         } catch (\Throwable $e) {
             $this->jsonResponse([

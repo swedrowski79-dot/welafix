@@ -52,6 +52,7 @@ declare(strict_types=1);
       <button class="btn" type="button" data-endpoint="/api/filedb/check">FileDB Check</button>
       <button class="btn" type="button" data-endpoint="/api/filedb/apply">FileDB Apply</button>
       <button class="btn" type="button" data-endpoint="/migrate.php">Migration</button>
+      <button class="btn" type="button" data-endpoint="/sync/xt-mapping">XT Mapping Sync</button>
       <button class="btn" type="button" id="xt-import-open">XT-Commerce Tabellen Import</button>
     </div>
   </div>
