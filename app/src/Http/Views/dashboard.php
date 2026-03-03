@@ -19,6 +19,12 @@ declare(strict_types=1);
         <span class="status-dot" id="xtapi-dot"></span>
         <span class="status-text" id="xtapi-status">XT-API: prüfe…</span>
       </div>
+      <div class="status-row">
+        <button class="status-toggle" type="button" id="debug-toggle">
+          <span class="status-dot" id="debug-dot"></span>
+          <span id="debug-label">Debug: prüfe…</span>
+        </button>
+      </div>
     </div>
     <div class="tile">
       <div class="tile-label">Sync</div>
@@ -106,6 +112,17 @@ declare(strict_types=1);
       dot.classList.remove('ok', 'fail');
       dot.classList.add(ok ? 'ok' : 'fail');
       text.textContent = label + ': ' + (ok ? 'ok' : 'fehler');
+    };
+
+    const setDebugStatus = (enabled) => {
+      const dot = document.getElementById('debug-dot');
+      const btn = document.getElementById('debug-toggle');
+      const label = document.getElementById('debug-label');
+      if (!dot || !btn || !label) return;
+      dot.classList.remove('ok', 'fail');
+      dot.classList.add(enabled ? 'ok' : 'fail');
+      label.textContent = 'Debug: ' + (enabled ? 'ein' : 'aus');
+      btn.dataset.enabled = enabled ? '1' : '0';
     };
 
     const checkStatus = async (endpoint, dotId, textId, label) => {
@@ -209,6 +226,17 @@ declare(strict_types=1);
       } catch (e) {}
     };
 
+    const loadXtSelftestToggle = async () => {
+      try {
+        const res = await fetch('/api/settings?key=xt_debug_enabled');
+        const json = await res.json();
+        if (json && json.ok) {
+          const enabled = !(json.value !== null && json.value !== '' && json.value !== '1');
+          setDebugStatus(enabled);
+        }
+      } catch (e) {}
+    };
+
     const saveXtBatch = async () => {
       const input = document.getElementById('xt-batch');
       let value = parseInt(input.value, 10);
@@ -230,6 +258,27 @@ declare(strict_types=1);
 
     document.getElementById('xt-batch-save').addEventListener('click', saveXtBatch);
     loadXtBatch();
+    loadXtSelftestToggle();
+
+    document.getElementById('debug-toggle').addEventListener('click', async () => {
+      const btn = document.getElementById('debug-toggle');
+      const current = btn.dataset.enabled === '1';
+      const next = current ? '0' : '1';
+      const body = new URLSearchParams();
+      body.set('key', 'xt_debug_enabled');
+      body.set('value', next);
+      try {
+        const res = await fetch('/api/settings', { method: 'POST', body });
+        const json = await res.json();
+        if (json && json.ok) {
+          setDebugStatus(next === '1');
+        } else {
+          setOutput(JSON.stringify(json, null, 2));
+        }
+      } catch (e) {
+        setOutput('Fehler: ' + e.message);
+      }
+    });
 
     const modal = document.getElementById('xt-modal');
     const modalStatus = document.getElementById('xt-import-status');

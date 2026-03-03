@@ -186,8 +186,10 @@ final class App
         if ($path === '/sync/xt-mapping') {
             header('Content-Type: application/json');
             try {
+                $start = microtime(true);
                 $service = new \Welafix\Domain\Xt\XtMappingSyncService();
                 $stats = $service->run('welafix_xt');
+                $stats['duration_ms'] = (int)round((microtime(true) - $start) * 1000);
                 echo json_encode($stats);
             } catch (\Throwable $e) {
                 http_response_code(500);
@@ -198,11 +200,13 @@ final class App
         if ($path === '/sync/xt-full') {
             header('Content-Type: application/json');
             try {
+                $start = microtime(true);
                 $mappingName = isset($_GET['mapping']) ? (string)$_GET['mapping'] : 'xt_commerce_full_tables';
                 $job = isset($_GET['job']) ? (string)$_GET['job'] : null;
                 $pageSize = isset($_GET['page_size']) ? (int)$_GET['page_size'] : 2000;
                 $service = new \Welafix\Domain\Xt\XtFullTableImportService();
                 $stats = $service->run($mappingName, $job, $pageSize);
+                $stats['duration_ms'] = (int)round((microtime(true) - $start) * 1000);
                 echo json_encode($stats);
             } catch (\Throwable $e) {
                 http_response_code(500);
@@ -214,6 +218,7 @@ final class App
         if ($path === '/sync/warengruppe') {
             header('Content-Type: application/json');
             try {
+                $start = microtime(true);
                 $service = new WarengruppeSyncService($factory);
                 $stats = $service->runImportAndBuildPaths();
                 try {
@@ -221,6 +226,7 @@ final class App
                 } catch (\Throwable $e) {
                     $stats['template_export_error'] = $e->getMessage();
                 }
+                $stats['duration_ms'] = (int)round((microtime(true) - $start) * 1000);
                 echo json_encode($stats);
             } catch (\Throwable $e) {
                 http_response_code(500);
@@ -267,6 +273,7 @@ final class App
                 } catch (\Throwable $e) {
                     $stats['template_export_error'] = $e->getMessage();
                 }
+                $stats['duration_ms'] = (int)round((microtime(true) - $start) * 1000);
                 echo json_encode($stats);
             } catch (\Throwable $e) {
                 http_response_code(500);
@@ -290,8 +297,10 @@ final class App
         if ($path === '/sync/media') {
             header('Content-Type: application/json');
             try {
+                $start = microtime(true);
                 $service = new \Welafix\Domain\Media\MediaSyncService($factory);
                 $stats = $service->run();
+                $stats['duration_ms'] = (int)round((microtime(true) - $start) * 1000);
                 echo json_encode($stats);
             } catch (\Throwable $e) {
                 http_response_code(500);
@@ -303,8 +312,10 @@ final class App
         if ($path === '/sync/dokument') {
             header('Content-Type: application/json');
             try {
+                $start = microtime(true);
                 $service = new \Welafix\Domain\Dokument\DokumentSyncService();
                 $stats = $service->run();
+                $stats['duration_ms'] = (int)round((microtime(true) - $start) * 1000);
                 echo json_encode($stats);
             } catch (\Throwable $e) {
                 http_response_code(500);

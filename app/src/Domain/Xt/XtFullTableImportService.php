@@ -100,6 +100,9 @@ final class XtFullTableImportService
             $page++;
         }
 
+        // XT Full-Table Import: always reset changed to 0
+        $pdo->exec('UPDATE ' . $this->quoteIdentifier($targetTable) . ' SET changed = 0');
+
         return $stats;
     }
 

@@ -39,6 +39,14 @@ final class MappingLoader
                 throw new RuntimeException("Mapping-Datei '{$file}' muss ein Array zurueckgeben.");
             }
 
+            // Skip XT target-mappings and XT full-table mappings (they don't have 'source'/'select')
+            if (!isset($mapping['source']) && (
+                (isset($mapping['targets']) && is_array($mapping['targets'])) ||
+                (isset($mapping['jobs']) && is_array($mapping['jobs']))
+            )) {
+                continue;
+            }
+
             $mappings[$name] = $this->validateMapping($mapping, $name, $file);
         }
 

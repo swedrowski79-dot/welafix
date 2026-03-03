@@ -36,6 +36,8 @@ declare(strict_types=1);
     .status-dot.ok { background: var(--ok); }
     .status-dot.fail { background: var(--fail); }
     .status-text { font-size: 14px; }
+    .status-toggle { display: inline-flex; align-items: center; gap: 8px; background: transparent; border: 0; padding: 0; font: inherit; color: inherit; cursor: pointer; }
+    .status-toggle:hover { text-decoration: underline; }
     .btn { display: inline-block; padding: 8px 12px; border: 1px solid var(--border); border-radius: 8px; text-decoration: none; background: #fff; color: var(--text); cursor: pointer; transition: border-color 0.15s ease, box-shadow 0.15s ease; }
     .btn:hover { border-color: #cbd5e1; box-shadow: 0 1px 3px rgba(16,24,40,0.08); }
     .btn:disabled { opacity: 0.6; cursor: not-allowed; box-shadow: none; }

@@ -150,7 +150,7 @@ return [
 
     'xt_media_link' => [
       'table' => 'xt_media_link',
-      'primary_key' => 'id',
+      'primary_key' => 'ml_id',
       'mode' => 'upsert',
       'columns' => [
         'ml_id'     => 'auto',
@@ -162,17 +162,17 @@ return [
       ],
     ],
 
-    'xt_media_to_media_galleriy' => [
-      'table' => 'xt_media_to_media_galleriy',
+   /* 'xt_media_to_media_gallery' => [
+      'table' => 'xt_media_to_media_gallery',
       'primary_key' => 'ml_id',
       'mode' => 'upsert',
       'columns' => [
-        'ml_id' => 'xt_media_link.id',
+        'ml_id' => 'xt_media_link.ml_id',
         'm_id'  => 'xt_media.id',
         'mg_id' => 'xt_media.mg_id',
       ],
     ],
-
+*/
     // =========================
     // XT: Produkte
     // =========================
@@ -262,11 +262,11 @@ return [
     // =========================
     'xt_seo_url' => [
       'table' => 'xt_seo_url',
-      'primary_key' => ['link_id', 'language_code', 'store_id', 'link_type'],
+      'primary_key' => ['url_md5', 'language_code', 'store_id'],
       'mode' => 'upsert',
       'columns' => [
-        'url_md5'          => 'artikel.seo_url oder warengruppe.seo_url',
-        'url_text'         => 'md5(artikel.seo_url) oder md5(warengruppe.seo_url)',
+        'url_md5'          => 'md5(artikel.seo_url) oder md5(warengruppe.seo_url)',
+        'url_text'         => 'artikel.seo_url oder warengruppe.seo_url',
         'language_code'    => 'default:de',
         'link_type'        => 'calc:seo_link_type',
         'link_id'          => 'xt_products.products_id oder xt_categories.categories_id',

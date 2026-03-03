@@ -29,6 +29,10 @@ final class ConnectionFactory
 
         $pdo = new SqliteGuardedPdo('sqlite:' . $path);
         $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+        // reduce "database is locked" errors under concurrent access
+        $pdo->exec('PRAGMA busy_timeout = 10000');
+        $pdo->exec('PRAGMA journal_mode = WAL');
+        $pdo->exec('PRAGMA synchronous = NORMAL');
         $this->sqlite = $pdo;
         return $pdo;
     }
