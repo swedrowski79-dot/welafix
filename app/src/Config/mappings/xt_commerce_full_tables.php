@@ -42,6 +42,8 @@ return [
     // - 'truncate_insert' = Ziel leeren und komplett neu befüllen
     // - 'append'          = nur anhängen (nicht empfohlen)
     'no_key_strategy' => 'truncate_insert',
+    // Für Full-Table Sync: Zieltabellen vorher leeren
+    'truncate_before_import' => true,
   ],
 
   'jobs' => [

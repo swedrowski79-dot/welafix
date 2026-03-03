@@ -41,18 +41,19 @@ return [
     // =========================
     'xt_categories' => [
       'table' => 'xt_categories',
+      'base' => 'warengruppe',
       'primary_key' => 'categories_id',
       'mode' => 'upsert',
       'columns' => [
-        'categories_id'              => 'auto',
+        'categories_id'              => 'lookup(xt_categories, external_id, warengruppe.afs_wg_id, categories_id)',
         'external_id'                => 'warengruppe.afs_wg_id',
         'permission_id'              => 'default:""',
         'categories_owner'           => 'default:1',
-        'categories_image'           => 'warengruppe.Bild',
+        'categories_image'           => 'warengruppe.Bild oder lookup(xt_categories, external_id, warengruppe.afs_wg_id, categories_image)',
         'categories_left'            => 'calc:nested_set_left',
         'categories_right'           => 'calc:nested_set_right',
         'categories_level'           => 'warengruppe.Ebene+1',
-        'parent_id'                  => 'warengruppe.parent_id',   // in Excel stand "categroies_id" (Typo) → sinnvoll: parent_id
+        'parent_id'                  => 'lookup(xt_categories, external_id, warengruppe.parent_id, categories_id)',
         'categories_status'          => 'warengruppe.Internet',
         'categories_template'        => 'default:""',
         'listing_template'           => 'default:""',
@@ -66,16 +67,17 @@ return [
         'category_custom_link'       => 'default:0',
         'category_custom_link_type'  => 'default:""',
         'google_product_cat'         => 'default:""',
-        'categories_master_image'    => 'warengruppe.Bild_gross',
+        'categories_master_image'    => 'warengruppe.Bild_gross oder lookup(xt_categories, external_id, warengruppe.afs_wg_id, categories_master_image)',
       ],
     ],
 
     'xt_categories_description' => [
       'table' => 'xt_categories_description',
+      'base' => 'warengruppe',
       'primary_key' => ['categories_id', 'language_code'],
       'mode' => 'upsert',
       'columns' => [
-        'categories_id'              => 'xt_categories.categories_id',
+        'categories_id'              => 'lookup(xt_categories, external_id, warengruppe.afs_wg_id, categories_id)',
         'language_code'              => 'default:de',
         'categories_name'            => 'warengruppe.name',
         'categories_heading_title'   => 'warengruppe.name',
@@ -91,6 +93,7 @@ return [
     // =========================
     'xt_media' => [
       'table' => 'xt_media',
+      'base' => 'media',
       'primary_key' => 'id',
       'mode' => 'upsert',
       'columns' => [
@@ -113,10 +116,11 @@ return [
 
     'xt_media_description' => [
       'table' => 'xt_media_description',
+      'base' => 'media',
       'primary_key' => ['id', 'language_code'],
       'mode' => 'upsert',
       'columns' => [
-        'id'              => 'xt_media.id',
+        'id'              => 'lookup(xt_media, external_id, media.id, id)',
         'language_code'   => 'default:de',
         'media_name'      => 'default:""',
         'media_description'=> 'default:""',
@@ -150,6 +154,7 @@ return [
 
     'xt_media_link' => [
       'table' => 'xt_media_link',
+      'base' => 'media',
       'primary_key' => 'ml_id',
       'mode' => 'upsert',
       'columns' => [
@@ -178,10 +183,11 @@ return [
     // =========================
     'xt_products' => [
       'table' => 'xt_products',
+      'base' => 'artikel',
       'primary_key' => 'products_id',
       'mode' => 'upsert',
       'columns' => [
-        'products_id'                     => 'auto',
+        'products_id'                     => 'lookup(xt_products, external_id, artikel.afs_artikel_id, products_id)',
         'external_id'                     => 'artikel.afs_artikel_id',
         'permission_id'                   => 'default:0',
         'products_owner'                  => 'default:0',
@@ -206,7 +212,7 @@ return [
 
         // ... (deine Excel enthält sehr viele Standardfelder)
         // Ich übernehme sie 1:1 aus deiner Tabelle:
-        'products_price'                  => 'artikel.VK3',
+        'products_price'                  => 'round(artikel.VK3,4)',
         'products_weight'                 => 'default:0',
         'products_status'                 => 'artikel.Internet',
         'products_tax_class_id'           => 'default:0',
@@ -227,10 +233,11 @@ return [
 
     'xt_products_description' => [
       'table' => 'xt_products_description',
+      'base' => 'artikel',
       'primary_key' => ['products_id', 'language_code'],
       'mode' => 'upsert',
       'columns' => [
-        'products_id'           => 'xt_products.products_id',
+        'products_id'           => 'lookup(xt_products, external_id, artikel.afs_artikel_id, products_id)',
         'language_code'         => 'default:de',
         'reload_st'             => 'default:0',
         'products_name'         => 'artikel.Bezeichnung',
@@ -247,11 +254,12 @@ return [
     // =========================
     'products_to_categories' => [
       'table' => 'products_to_categories',
+      'base' => 'artikel',
       'primary_key' => ['products_id', 'categories_id'],
       'mode' => 'upsert',
       'columns' => [
-        'products_id'   => 'xt_products.products_id',
-        'categories_id' => 'xt_categories.categories_id',
+        'products_id'   => 'lookup(xt_products, external_id, artikel.afs_artikel_id, products_id)',
+        'categories_id' => 'lookup(xt_categories, external_id, artikel.warengruppe_id, categories_id)',
         'master_link'   => 'default:1',
         'store_id'      => 'default:1',
       ],
@@ -260,18 +268,39 @@ return [
     // =========================
     // XT: SEO URL
     // =========================
-    'xt_seo_url' => [
+    'xt_seo_url_products' => [
       'table' => 'xt_seo_url',
-      'primary_key' => ['url_md5', 'language_code', 'store_id'],
+      'base' => 'artikel',
+      'unique_key' => ['url_md5'],
+      'primary_key' => ['link_id', 'link_type', 'language_code', 'store_id'],
       'mode' => 'upsert',
       'columns' => [
-        'url_md5'          => 'md5(artikel.seo_url) oder md5(warengruppe.seo_url)',
-        'url_text'         => 'artikel.seo_url oder warengruppe.seo_url',
+        'url_md5'          => 'md5(artikel.seo_url)',
+        'url_text'         => 'artikel.seo_url',
         'language_code'    => 'default:de',
-        'link_type'        => 'calc:seo_link_type',
-        'link_id'          => 'xt_products.products_id oder xt_categories.categories_id',
-        'meta_title'       => 'artikel.meta_title oder warengruppe.meta_title',
-        'meta_description' => 'artikel.meta_description oder warengruppe.meta_description',
+        'link_type'        => '1',
+        'link_id'          => 'lookup(xt_products, external_id, artikel.afs_artikel_id, products_id)',
+        'meta_title'       => 'artikel.meta_title',
+        'meta_description' => 'artikel.meta_description',
+        'meta_keywords'    => 'default:""',
+        'store_id'         => 'default:1',
+      ],
+    ],
+
+    'xt_seo_url_wg' => [
+      'table' => 'xt_seo_url',
+      'base' => 'warengruppe',
+      'unique_key' => ['url_md5'],
+      'primary_key' => ['link_id', 'link_type', 'language_code', 'store_id'],
+      'mode' => 'upsert',
+      'columns' => [
+        'url_md5'          => 'md5(warengruppe.seo_url)',
+        'url_text'         => 'warengruppe.seo_url',
+        'language_code'    => 'default:de',
+        'link_type'        => '2',
+        'link_id'          => 'lookup(xt_categories, external_id, warengruppe.afs_wg_id, categories_id)',
+        'meta_title'       => 'warengruppe.meta_title',
+        'meta_description' => 'warengruppe.meta_description',
         'meta_keywords'    => 'default:""',
         'store_id'         => 'default:1',
       ],

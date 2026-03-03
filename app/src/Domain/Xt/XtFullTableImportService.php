@@ -68,7 +68,9 @@ final class XtFullTableImportService
         $this->ensureChangedColumn($pdo, $targetTable);
 
         $noKeyStrategy = (string)($mapping['defaults']['no_key_strategy'] ?? 'truncate_insert');
-        if ($pkCols === [] && $noKeyStrategy === 'truncate_insert') {
+        $truncateAll = (bool)($mapping['defaults']['truncate_before_import'] ?? false);
+        $jobTruncate = isset($mapping['jobs']) && is_array($mapping['jobs']) ? (bool)($mapping['jobs'][$sourceTable]['truncate_before_import'] ?? false) : false;
+        if ($truncateAll || $jobTruncate || ($pkCols === [] && $noKeyStrategy === 'truncate_insert')) {
             $pdo->exec('DELETE FROM ' . $this->quoteIdentifier($targetTable));
         }
 
