@@ -16,5 +16,5 @@ COPY docker/php/apache.conf /etc/apache2/sites-available/000-default.conf
 
 # Composer (optional; uncomment if you want it)
 # COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
-
+COPY docker/php/conf.d/99-memory.ini /usr/local/etc/php/conf.d/99-memory.ini
 WORKDIR /var/www/html

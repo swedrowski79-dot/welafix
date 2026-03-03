@@ -195,6 +195,21 @@ final class App
             }
             return;
         }
+        if ($path === '/sync/xt-full') {
+            header('Content-Type: application/json');
+            try {
+                $mappingName = isset($_GET['mapping']) ? (string)$_GET['mapping'] : 'xt_commerce_full_tables';
+                $job = isset($_GET['job']) ? (string)$_GET['job'] : null;
+                $pageSize = isset($_GET['page_size']) ? (int)$_GET['page_size'] : 2000;
+                $service = new \Welafix\Domain\Xt\XtFullTableImportService();
+                $stats = $service->run($mappingName, $job, $pageSize);
+                echo json_encode($stats);
+            } catch (\Throwable $e) {
+                http_response_code(500);
+                echo json_encode(['ok' => false, 'error' => $e->getMessage()]);
+            }
+            return;
+        }
 
         if ($path === '/sync/warengruppe') {
             header('Content-Type: application/json');

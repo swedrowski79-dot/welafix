@@ -120,7 +120,11 @@ final class XtImportService
             throw new RuntimeException('XT-API unreachable: ' . $err);
         }
         if ($code >= 400) {
-            throw new RuntimeException('XT-API http error: ' . $code);
+            $body = is_string($resp) ? trim($resp) : '';
+            if (strlen($body) > 300) {
+                $body = substr($body, 0, 300) . '...';
+            }
+            throw new RuntimeException('XT-API http error: ' . $code . ' url=' . $url . ' body=' . $body);
         }
 
         $json = json_decode((string)$resp, true);

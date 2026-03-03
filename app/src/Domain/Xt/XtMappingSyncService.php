@@ -79,35 +79,80 @@ final class XtMappingSyncService
      * @param array<int, array<string, mixed>> $sourceRows
      * @return array<string, mixed>
      */
-    private function applyTarget(PDO $pdo, string $table, array $columns, mixed $primaryKey, array $existingCols, string $base, array $sourceRows): array
+    private function applyTarget(PDO $pdo, string $table, array $columns, mixed $primaryKey, array $existingCols, string $base, iterable $sourceRows): array
     {
         $inserted = 0;
         $updated = 0;
         $unchanged = 0;
         $needsNestedSet = false;
 
+        $pkCols = $this->normalizePk($primaryKey);
+        $compareCols = $this->getCompareColumns($columns, $existingCols);
+        if ($pkCols !== []) {
+            $this->ensurePkIndex($pdo, $table, $pkCols);
+        }
+        $upsert = $this->buildUpsertStatement($pdo, $table, $columns, $existingCols, $pkCols, $compareCols);
+        $upsertCols = $this->getUpsertColumns($table, $columns, $existingCols);
+        $selectByPk = $pkCols !== [] ? $this->buildSelectByPk($pdo, $table, $pkCols, $compareCols) : null;
+        $selectByExternal = $this->buildSelectByExternal($pdo, $table, $compareCols, $existingCols);
+        $updateStmt = $pkCols !== [] ? $this->buildUpdateStatement($pdo, $table, $columns, $existingCols, $pkCols) : null;
+        $updateCols = $pkCols !== [] ? $this->getUpdateColumns($table, $columns, $existingCols, $pkCols) : [];
+
         foreach ($sourceRows as $sourceRow) {
             $context = [$base => $sourceRow];
             $values = [];
+            $autoCols = [];
             foreach ($columns as $col => $expr) {
                 if (!isset($existingCols[strtolower($col)])) {
                     $this->warn($table, $this->pkJson($primaryKey, $values), (string)$expr, 'missing_column');
                     continue;
                 }
-                $values[$col] = $this->evalExpr((string)$expr, $context, $table, $primaryKey, $values);
+                $exprValue = $this->evalExpr((string)$expr, $context, $table, $primaryKey, $values);
+                if ($exprValue === '__AUTO__') {
+                    $autoCols[$col] = true;
+                    $values[$col] = null;
+                } else {
+                    $values[$col] = $exprValue;
+                }
             }
 
-            $pkCols = $this->normalizePk($primaryKey);
             $pkValues = $this->buildPkValues($pkCols, $values);
 
-            $lookup = $this->findExistingRow($pdo, $table, $pkCols, $pkValues, $values);
-            $existing = $lookup['row'] ?? null;
-            $lookupPk = $lookup['pk'] ?? $pkValues;
+            $hasPk = $pkCols !== [] && $this->hasNonAutoPk($pkValues);
+            if ($hasPk && $upsert) {
+                $this->bindValues($upsert, $values, $columns, $existingCols, $pkCols, $autoCols, $upsertCols);
+                $upsert->execute();
+                $count = $upsert->rowCount();
+                if ($count > 0) {
+                    $updated++;
+                    if ($table === 'xt_categories') {
+                        $needsNestedSet = true;
+                    }
+                } else {
+                    $unchanged++;
+                }
+                $this->updateTargetMap($table, $values, $pkCols, $pdo);
+                continue;
+            }
 
-            $compareCols = $this->getCompareColumns($columns, $existingCols);
+            // fallback: external_id or no PK
+            $existing = null;
+            $lookupPk = $pkValues;
+            if ($hasPk && $selectByPk) {
+                $this->bindPk($selectByPk, $pkCols, $pkValues);
+                $selectByPk->execute();
+                $existing = $selectByPk->fetch(PDO::FETCH_ASSOC) ?: null;
+            }
+            if ($existing === null && isset($values['external_id']) && $selectByExternal) {
+                $selectByExternal->execute([':external_id' => $values['external_id']]);
+                $existing = $selectByExternal->fetch(PDO::FETCH_ASSOC) ?: null;
+                if ($existing) {
+                    $lookupPk = $this->buildPkValues($pkCols, $existing);
+                }
+            }
 
             if ($existing === null) {
-                $this->insertRow($pdo, $table, $values, $existingCols, $pkCols);
+                $this->insertRow($pdo, $table, $values, $existingCols, $pkCols, $autoCols);
                 $inserted++;
                 $this->setChanged($pdo, $table, $pkCols, $this->buildPkValues($pkCols, $values));
                 if ($table === 'xt_categories') {
@@ -119,7 +164,13 @@ final class XtMappingSyncService
 
             $diff = $this->diffValues($existing, $values, $compareCols);
             if ($diff) {
-                $this->updateRow($pdo, $table, $values, $existingCols, $pkCols, $lookupPk);
+                if ($updateStmt) {
+                    $this->bindValues($updateStmt, $values, $columns, $existingCols, $pkCols, $autoCols, $updateCols);
+                    $this->bindPk($updateStmt, $pkCols, $lookupPk);
+                    $updateStmt->execute();
+                } else {
+                    $this->updateRow($pdo, $table, $values, $existingCols, $pkCols, $lookupPk, $autoCols);
+                }
                 $updated++;
                 $this->setChanged($pdo, $table, $pkCols, $lookupPk);
                 if ($table === 'xt_categories') {
@@ -191,13 +242,13 @@ final class XtMappingSyncService
     /**
      * @return array<int, array<string, mixed>>
      */
-    private function fetchSourceRows(PDO $pdo, string $source): array
+    private function fetchSourceRows(PDO $pdo, string $source): iterable
     {
         if (!preg_match('/^[A-Za-z0-9_]+$/', $source)) {
             return [];
         }
         $stmt = $pdo->query('SELECT * FROM ' . $this->quoteIdentifier($source));
-        return $stmt ? $stmt->fetchAll(PDO::FETCH_ASSOC) : [];
+        return $stmt ?: [];
     }
 
     private function evalExpr(string $expr, array $context, string $table, mixed $primaryKey, array $values): mixed
@@ -213,7 +264,7 @@ final class XtMappingSyncService
             return $this->calcValue(substr($expr, 5));
         }
         if ($expr === 'auto') {
-            return null;
+            return '__AUTO__';
         }
         if ($expr === 'filename') {
             return $context['media']['filename'] ?? null;
@@ -401,6 +452,9 @@ final class XtMappingSyncService
             if (strtolower($col) === 'changed') {
                 continue;
             }
+            if (strtolower((string)$expr) === 'auto') {
+                continue;
+            }
             if (str_starts_with((string)$expr, 'calc:')) {
                 continue;
             }
@@ -432,12 +486,15 @@ final class XtMappingSyncService
         return (string)$value;
     }
 
-    private function insertRow(PDO $pdo, string $table, array $values, array $existingCols, array $pkCols): void
+    private function insertRow(PDO $pdo, string $table, array $values, array $existingCols, array $pkCols, array $autoCols): void
     {
         $cols = [];
         $params = [];
         foreach ($values as $col => $val) {
             if (!isset($existingCols[strtolower($col)])) {
+                continue;
+            }
+            if (isset($autoCols[$col])) {
                 continue;
             }
             if (in_array($col, $pkCols, true) && ($val === null || $val === '' || $val === 'auto')) {
@@ -456,12 +513,15 @@ final class XtMappingSyncService
         $stmt->execute($params);
     }
 
-    private function updateRow(PDO $pdo, string $table, array $values, array $existingCols, array $pkCols, array $pkValues): void
+    private function updateRow(PDO $pdo, string $table, array $values, array $existingCols, array $pkCols, array $pkValues, array $autoCols): void
     {
         $sets = [];
         $params = [];
         foreach ($values as $col => $val) {
             if (!isset($existingCols[strtolower($col)])) {
+                continue;
+            }
+            if (isset($autoCols[$col])) {
                 continue;
             }
             if (in_array($col, $pkCols, true)) {
@@ -528,38 +588,52 @@ final class XtMappingSyncService
 
     private function rebuildNestedSet(PDO $pdo): int
     {
-        $rows = $pdo->query('SELECT categories_id, parent_id, sort_order FROM xt_categories')?->fetchAll(PDO::FETCH_ASSOC) ?: [];
-        $tree = [];
-        foreach ($rows as $row) {
-            $id = (int)($row['categories_id'] ?? 0);
-            $parent = (int)($row['parent_id'] ?? 0);
-            $sort = (int)($row['sort_order'] ?? 0);
-            $tree[$parent][] = ['id' => $id, 'sort' => $sort];
-        }
-        foreach ($tree as &$children) {
-            usort($children, fn($a, $b) => $a['sort'] <=> $b['sort']);
-        }
-        unset($children);
-
-        $leftRight = [];
-        $counter = 1;
-        $visit = function ($parent) use (&$visit, &$tree, &$leftRight, &$counter) {
-            $children = $tree[$parent] ?? [];
-            foreach ($children as $child) {
-                $id = $child['id'];
-                $left = $counter++;
-                $visit($id);
-                $right = $counter++;
-                $leftRight[$id] = ['left' => $left, 'right' => $right];
-            }
-        };
-        $visit(0);
-
         $stmt = $pdo->prepare('UPDATE xt_categories SET categories_left = :l, categories_right = :r WHERE categories_id = :id');
-        foreach ($leftRight as $id => $lr) {
-            $stmt->execute([':l' => $lr['left'], ':r' => $lr['right'], ':id' => $id]);
+        $childrenStmt = $pdo->prepare('SELECT categories_id, sort_order FROM xt_categories WHERE parent_id = :pid ORDER BY sort_order ASC, categories_id ASC');
+        $counter = 1;
+        $updated = 0;
+
+        $stack = [
+            ['id' => 0, 'idx' => 0, 'started' => false, 'left' => 0, 'children' => null],
+        ];
+
+        while ($stack !== []) {
+            $topIndex = count($stack) - 1;
+            $node = &$stack[$topIndex];
+            if (!$node['started']) {
+                $node['left'] = $counter++;
+                $node['started'] = true;
+            }
+
+            if ($node['children'] === null) {
+                $childrenStmt->execute([':pid' => $node['id']]);
+                $rows = $childrenStmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+                $childIds = [];
+                foreach ($rows as $row) {
+                    $childIds[] = (int)($row['categories_id'] ?? 0);
+                }
+                $node['children'] = $childIds;
+            }
+
+            $children = $node['children'];
+            if ($node['idx'] < count($children)) {
+                $childId = $children[$node['idx']];
+                $node['idx']++;
+                $stack[] = ['id' => $childId, 'idx' => 0, 'started' => false, 'left' => 0, 'children' => null];
+                unset($node);
+                continue;
+            }
+
+            $right = $counter++;
+            if ($node['id'] !== 0) {
+                $stmt->execute([':l' => $node['left'], ':r' => $right, ':id' => $node['id']]);
+                $updated++;
+            }
+            array_pop($stack);
+            unset($node);
         }
-        return count($leftRight);
+
+        return $updated;
     }
 
     private function createTable(PDO $pdo, string $table, array $columns, mixed $primaryKey): void
@@ -609,7 +683,7 @@ final class XtMappingSyncService
         }
         $this->loggedMissing[$key] = true;
         $line = 'WARNING table=' . $table . ' pk=' . $pkJson . ' mapping=' . $mapping . ' reason=' . $reason;
-        error_log($line);
+        $this->logWarning($line);
     }
 
     private function pkJson(mixed $primaryKey, array $values): string
@@ -627,5 +701,159 @@ final class XtMappingSyncService
     private function quoteIdentifier(string $name): string
     {
         return '"' . str_replace('"', '""', $name) . '"';
+    }
+
+    private function buildUpsertStatement(PDO $pdo, string $table, array $columns, array $existingCols, array $pkCols, array $compareCols): ?\PDOStatement
+    {
+        if ($pkCols === []) {
+            return null;
+        }
+        $cols = [];
+        foreach ($columns as $col => $expr) {
+            if (!isset($existingCols[strtolower($col)])) {
+                continue;
+            }
+            if (strtolower((string)$expr) === 'auto') {
+                continue;
+            }
+            $cols[] = $col;
+        }
+        $cols[] = 'changed';
+        $params = array_map(static fn(string $c): string => ':' . $c, $cols);
+        $insert = 'INSERT INTO ' . $this->quoteIdentifier($table) .
+            ' (' . implode(',', array_map([$this, 'quoteIdentifier'], $cols)) . ')' .
+            ' VALUES (' . implode(',', $params) . ')';
+
+        $setParts = [];
+        foreach ($cols as $col) {
+            if ($col === 'changed') continue;
+            $setParts[] = $this->quoteIdentifier($col) . ' = excluded.' . $this->quoteIdentifier($col);
+        }
+        $setParts[] = 'changed = 1';
+
+        $whereParts = [];
+        foreach ($compareCols as $col) {
+            $whereParts[] = 'COALESCE(excluded.' . $this->quoteIdentifier($col) . ', \'\') <> COALESCE(' . $this->quoteIdentifier($col) . ', \'\')';
+        }
+        $where = $whereParts !== [] ? (' WHERE ' . implode(' OR ', $whereParts)) : '';
+
+        $sql = $insert . ' ON CONFLICT(' . implode(',', array_map([$this, 'quoteIdentifier'], $pkCols)) . ') DO UPDATE SET ' .
+            implode(', ', $setParts) . $where;
+        return $pdo->prepare($sql);
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    private function getUpsertColumns(string $table, array $columns, array $existingCols): array
+    {
+        $cols = [];
+        foreach ($columns as $col => $expr) {
+            if (!isset($existingCols[strtolower($col)])) continue;
+            if (strtolower((string)$expr) === 'auto') continue;
+            $cols[] = $col;
+        }
+        $cols[] = 'changed';
+        return $cols;
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    private function getUpdateColumns(string $table, array $columns, array $existingCols, array $pkCols): array
+    {
+        $cols = [];
+        foreach ($columns as $col => $expr) {
+            if (!isset($existingCols[strtolower($col)])) continue;
+            if (strtolower((string)$expr) === 'auto') continue;
+            if (in_array($col, $pkCols, true)) continue;
+            $cols[] = $col;
+        }
+        $cols[] = 'changed';
+        return $cols;
+    }
+
+    private function ensurePkIndex(PDO $pdo, string $table, array $pkCols): void
+    {
+        $idx = 'idx_' . $table . '_pk';
+        $cols = implode(',', array_map([$this, 'quoteIdentifier'], $pkCols));
+        $pdo->exec('CREATE UNIQUE INDEX IF NOT EXISTS ' . $idx . ' ON ' . $this->quoteIdentifier($table) . '(' . $cols . ')');
+    }
+
+    private function buildSelectByPk(PDO $pdo, string $table, array $pkCols, array $compareCols): \PDOStatement
+    {
+        $cols = array_values(array_unique(array_merge($pkCols, $compareCols)));
+        $select = 'SELECT ' . implode(',', array_map([$this, 'quoteIdentifier'], $cols)) .
+            ' FROM ' . $this->quoteIdentifier($table) .
+            ' WHERE ' . implode(' AND ', array_map(fn(string $c): string => $this->quoteIdentifier($c) . ' = :' . $c, $pkCols)) .
+            ' LIMIT 1';
+        return $pdo->prepare($select);
+    }
+
+    private function buildSelectByExternal(PDO $pdo, string $table, array $compareCols, array $existingCols): ?\PDOStatement
+    {
+        if (!isset($existingCols['external_id'])) {
+            return null;
+        }
+        $cols = array_values(array_unique(array_merge(['external_id'], $compareCols)));
+        $select = 'SELECT ' . implode(',', array_map([$this, 'quoteIdentifier'], $cols)) .
+            ' FROM ' . $this->quoteIdentifier($table) . ' WHERE external_id = :external_id LIMIT 1';
+        return $pdo->prepare($select);
+    }
+
+    private function buildUpdateStatement(PDO $pdo, string $table, array $columns, array $existingCols, array $pkCols): ?\PDOStatement
+    {
+        if ($pkCols === []) {
+            return null;
+        }
+        $sets = [];
+        foreach ($columns as $col => $expr) {
+            if (!isset($existingCols[strtolower($col)])) continue;
+            if (strtolower((string)$expr) === 'auto') continue;
+            if (in_array($col, $pkCols, true)) continue;
+            $sets[] = $this->quoteIdentifier($col) . ' = :' . $col;
+        }
+        $sets[] = 'changed = 1';
+        $where = implode(' AND ', array_map(fn(string $c): string => $this->quoteIdentifier($c) . ' = :pk_' . $c, $pkCols));
+        if ($sets === ['changed = 1']) {
+            return null;
+        }
+        $sql = 'UPDATE ' . $this->quoteIdentifier($table) . ' SET ' . implode(', ', $sets) . ' WHERE ' . $where;
+        return $pdo->prepare($sql);
+    }
+
+    private function bindValues(\PDOStatement $stmt, array $values, array $columns, array $existingCols, array $pkCols, array $autoCols, array $allowedCols = []): void
+    {
+        $allowed = $allowedCols !== [] ? array_flip($allowedCols) : null;
+        foreach ($columns as $col => $expr) {
+            if (!isset($existingCols[strtolower($col)])) continue;
+            if (isset($autoCols[$col])) continue;
+            if (in_array($col, $pkCols, true) && ($values[$col] ?? null) === null) continue;
+            if ($allowed !== null && !isset($allowed[$col])) continue;
+            $stmt->bindValue(':' . $col, $values[$col] ?? null);
+        }
+        if (str_contains($stmt->queryString, ':changed')) {
+            $stmt->bindValue(':changed', 1, PDO::PARAM_INT);
+        }
+    }
+
+    private function bindPk(\PDOStatement $stmt, array $pkCols, array $pkValues): void
+    {
+        $sql = $stmt->queryString ?? '';
+        foreach ($pkCols as $pk) {
+            $val = $pkValues[$pk] ?? null;
+            if (str_contains($sql, ':pk_' . $pk)) {
+                $stmt->bindValue(':pk_' . $pk, $val);
+            }
+            if (str_contains($sql, ':' . $pk)) {
+                $stmt->bindValue(':' . $pk, $val);
+            }
+        }
+    }
+
+    private function logWarning(string $line): void
+    {
+        $path = __DIR__ . '/../../../logs/xt_mapping_warnings.log';
+        @file_put_contents($path, $line . PHP_EOL, FILE_APPEND);
     }
 }

@@ -45,7 +45,7 @@ return [
       'mode' => 'upsert',
       'columns' => [
         'categories_id'              => 'auto',
-        'external_id'                => 'warengruppe.afs_id',
+        'external_id'                => 'warengruppe.afs_wg_id',
         'permission_id'              => 'default:""',
         'categories_owner'           => 'default:1',
         'categories_image'           => 'warengruppe.Bild',
@@ -80,8 +80,9 @@ return [
         'categories_name'            => 'warengruppe.name',
         'categories_heading_title'   => 'warengruppe.name',
         'categories_description'     => 'warengruppe.Beschreibung',
-        'categories_short_description'=> 'leer',          // Excel: "leer" → Codex: als NULL/"" behandeln
-        'meta_title'                 => 'default:""',
+        'categories_description_bottom'=> 'default:""', 
+        'categories_store_id'=> 'default:"1"',
+
       ],
     ],
 
@@ -95,19 +96,18 @@ return [
       'columns' => [
         'id'                => 'auto',
         'file'              => 'filename',
-        'type'              => 'media.filetype',
+        'type'              => 'media.type',
         'class'             => 'media.source',
         'download_status'   => 'default:free',
         'status'            => 'default:1',
         'owner'             => 'default:1',
-        'created'           => 'calc:now',
+        'date_added'           => 'calc:now',
         'last_modified'     => 'calc:now',
-        'file_type'         => 'default:""',
-        'mime_type'         => 'default:""',
-        'file_size'         => 'default:0',
-        'height'            => 'default:0',
-        'width'             => 'default:0',
-        'sort_order'        => 'default:0',
+        'max_dl_count'         => 'default:"0"',
+        'max_dl_days'         => 'default:"0"',
+        'total_downloads'         => 'default:0',
+        'copyright_holder'            => 'default:""',
+        'external_id'             => 'media.id',
       ],
     ],
 
@@ -153,9 +153,9 @@ return [
       'primary_key' => 'id',
       'mode' => 'upsert',
       'columns' => [
-        'id'        => 'auto',
+        'ml_id'     => 'auto',
         'm_id'      => 'xt_media.id',
-        'mg_id'     => 'xt_media.mg_id',
+        'link_id'   => 'xt_products.id',
         'class'     => 'default:""',
         'type'      => 'default:""',
         'sort_order'=> 'default:0',
@@ -189,8 +189,8 @@ return [
         'products_quantity'               => 'artikel.Bestand',
         'show_stock'                      => 'default:0',
         'products_average_quantity'       => 'default:0',
-        'products_shipping_time'          => 'artikel.ZusatzFeld01',
-        'products_shipping_time_nostock'  => 'default:""',
+        'products_shippingtime'          => 'artikel.ZusatzFeld01',
+        'products_shippingtime_nostock'  => 'default:""',
         'products_model'                  => 'artikel.artikelnummer',
         'products_master_flag'            => 'artikel.is_slave',
         'products_master_model'           => 'artikel.master_modell',
@@ -206,7 +206,7 @@ return [
 
         // ... (deine Excel enthält sehr viele Standardfelder)
         // Ich übernehme sie 1:1 aus deiner Tabelle:
-        'products_price'                  => 'artikel.Preis',
+        'products_price'                  => 'artikel.VK3',
         'products_weight'                 => 'default:0',
         'products_status'                 => 'artikel.Internet',
         'products_tax_class_id'           => 'default:0',
@@ -237,9 +237,8 @@ return [
         'products_description'  => 'artikel.Langtext',
         'products_short_description' => 'default:""',
         'products_keywords'     => 'default:""',
-        'products_meta_title'   => 'artikel.meta_title',
-        'products_meta_description' => 'artikel.meta_description',
-        'products_meta_keywords'=> 'default:""',
+        'products_url'   => 'default:""',
+        'products_store_id' => 'default:1',
       ],
     ],
 
