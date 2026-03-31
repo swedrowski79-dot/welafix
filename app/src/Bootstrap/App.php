@@ -158,6 +158,10 @@ final class App
             (new ApiController($factory))->mediaUsage();
             return;
         }
+        if ($path === '/api/log/app') {
+            (new ApiController($factory))->appLogTail();
+            return;
+        }
         if ($path === '/api/xt/check') {
             (new ApiController($factory))->xtApiCheck();
             return;

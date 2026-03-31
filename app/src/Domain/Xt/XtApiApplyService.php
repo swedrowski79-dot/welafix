@@ -12,7 +12,8 @@ final class XtApiApplyService
 {
     /** @var array<string, array<string, mixed>> */
     private array $schemaCache = [];
-
+    /** @var array<string, bool>|null */
+    private ?array $remoteSeoKeys = null;
     public function __construct(private ConnectionFactory $factory) {}
 
     /**
@@ -21,6 +22,8 @@ final class XtApiApplyService
     public function run(string $mappingName = 'welafix_xt'): array
     {
         $pdo = Db::guardSqlite($this->factory->sqlite(), __METHOD__);
+        $this->repairLocalMediaState($pdo);
+        $orphans = $this->collectOrphanRelationIds($pdo);
         $mapping = $this->loadMapping($mappingName);
         $targets = $mapping['targets'] ?? [];
         if (!is_array($targets) || $targets === []) {
@@ -43,13 +46,26 @@ final class XtApiApplyService
             'delete_ops' => [],
             'upserts' => [],
             'local_reset' => [],
+            'local_cleanup' => [],
         ];
 
-        $affected = $this->collectAffectedIds($pdo);
+        $affected = $this->collectAffectedIds($pdo, $orphans);
         foreach ($this->buildDeleteOps($affected) as $op) {
-            $result = $this->request('POST', '/apply', $op);
+            $payload = $op;
+            $payload['table'] = $this->remoteTableName((string)$op['table']);
+            try {
+                $result = $this->request('POST', '/apply', $payload);
+            } catch (\Throwable $e) {
+                throw new RuntimeException(
+                    'XT apply delete failed for table ' . $payload['table'] . ': ' . $e->getMessage(),
+                    0,
+                    $e
+                );
+            }
             $stats['delete_ops'][] = $result;
         }
+
+        $stats['local_cleanup'] = $this->cleanupLocalOrphanRelations($pdo);
 
         foreach ($tableOrder as $table) {
             $rows = $this->loadRowsForPush($pdo, $table, $affected);
@@ -57,10 +73,11 @@ final class XtApiApplyService
                 $stats['upserts'][$table] = 0;
                 continue;
             }
-            $schema = $this->fetchTableSchema($table);
+            $remoteTable = $this->remoteTableName($table);
+            $schema = $this->fetchTableSchema($remoteTable);
             $keyColumns = $this->resolveKeyColumns($schema);
             if ($keyColumns === []) {
-                throw new RuntimeException('Keine Key-Spalten für XT-Tabelle gefunden: ' . $table);
+                throw new RuntimeException('Keine Key-Spalten für XT-Tabelle gefunden: ' . $remoteTable);
             }
             $validCols = array_fill_keys(array_map(static fn(array $col): string => (string)$col['name'], $schema['columns'] ?? []), true);
             $filtered = [];
@@ -79,12 +96,20 @@ final class XtApiApplyService
                 $stats['upserts'][$table] = 0;
                 continue;
             }
-            $result = $this->request('POST', '/apply', [
-                'table' => $table,
-                'mode' => 'upsert',
-                'key_columns' => $keyColumns,
-                'rows' => $filtered,
-            ]);
+            try {
+                $result = $this->request('POST', '/apply', [
+                    'table' => $remoteTable,
+                    'mode' => 'upsert',
+                    'key_columns' => $keyColumns,
+                    'rows' => $filtered,
+                ]);
+            } catch (\Throwable $e) {
+                throw new RuntimeException(
+                    'XT apply upsert failed for table ' . $remoteTable . ': ' . $e->getMessage(),
+                    0,
+                    $e
+                );
+            }
             $stats['upserts'][$table] = (int)($result['rows'] ?? count($filtered));
         }
 
@@ -103,7 +128,7 @@ final class XtApiApplyService
     /**
      * @return array<string, array<int, string>>
      */
-    private function collectAffectedIds(PDO $pdo): array
+    private function collectAffectedIds(PDO $pdo, array $orphans = []): array
     {
         return [
             'changed_product_ids' => $this->fetchColumn($pdo, 'SELECT products_id FROM xt_products WHERE changed = 1'),
@@ -114,7 +139,80 @@ final class XtApiApplyService
             'deleted_media_ids' => $this->fetchColumn($pdo, 'SELECT id FROM xt_media WHERE changed = 1 AND COALESCE(status,0) = 0'),
             'changed_attr_product_ids' => $this->fetchColumn($pdo, 'SELECT DISTINCT products_id FROM xt_plg_products_to_attributes WHERE changed = 1'),
             'changed_media_link_product_ids' => $this->fetchColumn($pdo, 'SELECT DISTINCT link_id FROM xt_media_link WHERE changed = 1'),
+            'changed_ptc_product_ids' => $this->fetchColumn($pdo, 'SELECT DISTINCT products_id FROM xt_products_to_categories WHERE changed = 1'),
+            'changed_ptc_category_ids' => $this->fetchColumn($pdo, 'SELECT DISTINCT categories_id FROM xt_products_to_categories WHERE changed = 1'),
+            'orphan_attr_product_ids' => array_values(array_unique(array_map('strval', $orphans['orphan_attr_product_ids'] ?? []))),
         ];
+    }
+
+    /**
+     * @return array<string, array<int, string>>
+     */
+    private function collectOrphanRelationIds(PDO $pdo): array
+    {
+        return [
+            'orphan_attr_product_ids' => $this->fetchColumn(
+                $pdo,
+                'SELECT DISTINCT x.products_id
+                 FROM xt_plg_products_to_attributes x
+                 LEFT JOIN xt_products p ON p.products_id = x.products_id
+                 WHERE p.products_id IS NULL'
+            ),
+        ];
+    }
+
+    private function repairLocalMediaState(PDO $pdo): void
+    {
+        if ($this->tableHasColumn($pdo, 'xt_media', 'id') && $this->tableHasColumn($pdo, 'xt_media', 'external_id')) {
+            $maxId = (int)($pdo->query("SELECT COALESCE(MAX(CAST(id AS INTEGER)), 0) FROM xt_media WHERE id IS NOT NULL AND CAST(id AS TEXT) <> ''")?->fetchColumn() ?? 0);
+            $rows = $pdo->query("SELECT rowid FROM xt_media WHERE (id IS NULL OR CAST(id AS TEXT) = '') AND external_id IS NOT NULL AND CAST(external_id AS TEXT) <> '' ORDER BY rowid ASC")?->fetchAll(PDO::FETCH_COLUMN) ?: [];
+            if ($rows !== []) {
+                $stmt = $pdo->prepare('UPDATE xt_media SET id = :id, changed = 1 WHERE rowid = :rowid');
+                foreach ($rows as $rowid) {
+                    $maxId++;
+                    $stmt->execute([
+                        ':id' => $maxId,
+                        ':rowid' => $rowid,
+                    ]);
+                }
+            }
+        }
+
+        if ($this->tableHasColumn($pdo, 'xt_media_link', 'type')) {
+            $pdo->exec("UPDATE xt_media_link SET type = 'images', changed = 1 WHERE type IS NULL OR CAST(type AS TEXT) = ''");
+        }
+        if ($this->tableHasColumn($pdo, 'xt_media_link', 'class')) {
+            $pdo->exec("UPDATE xt_media_link SET class = 'product', changed = 1 WHERE class IS NULL OR CAST(class AS TEXT) = ''");
+        }
+        if (
+            $this->tableHasColumn($pdo, 'xt_media_link', 'm_id')
+            && $this->tableHasColumn($pdo, 'xt_media_link', 'link_id')
+            && $this->tableHasColumn($pdo, 'xt_media_link', 'sort_order')
+            && $this->tableHasColumn($pdo, 'xt_products', 'products_id')
+            && $this->tableHasColumn($pdo, 'xt_products', 'external_id')
+            && $this->tableHasColumn($pdo, 'artikel_media_map', 'afs_artikel_id')
+            && $this->tableHasColumn($pdo, 'artikel_media_map', 'position')
+            && $this->tableHasColumn($pdo, 'artikel_media_map', 'media_id')
+            && $this->tableHasColumn($pdo, 'xt_media', 'id')
+            && $this->tableHasColumn($pdo, 'xt_media', 'external_id')
+        ) {
+            $pdo->exec(
+                "UPDATE xt_media_link
+                 SET m_id = (
+                   SELECT xm.id
+                   FROM xt_products xp
+                   JOIN artikel_media_map am
+                     ON CAST(am.afs_artikel_id AS TEXT) = CAST(xp.external_id AS TEXT)
+                    AND CAST(am.position AS TEXT) = CAST(xt_media_link.sort_order AS TEXT)
+                   JOIN xt_media xm
+                     ON CAST(xm.external_id AS TEXT) = CAST(am.media_id AS TEXT)
+                   WHERE CAST(xp.products_id AS TEXT) = CAST(xt_media_link.link_id AS TEXT)
+                   LIMIT 1
+                 ),
+                 changed = 1
+                 WHERE m_id IS NULL OR CAST(m_id AS TEXT) = ''"
+            );
+        }
     }
 
     /**
@@ -124,18 +222,20 @@ final class XtApiApplyService
     private function buildDeleteOps(array $affected): array
     {
         $ops = [];
-        $productIds = array_values(array_unique(array_merge($affected['changed_product_ids'], $affected['deleted_product_ids'])));
-        $categoryIds = array_values(array_unique(array_merge($affected['changed_category_ids'], $affected['deleted_category_ids'])));
-        $attrProductIds = array_values(array_unique(array_merge($affected['changed_attr_product_ids'], $affected['deleted_product_ids'])));
+        $productIds = array_values(array_unique(array_merge($affected['deleted_product_ids'], $affected['changed_ptc_product_ids'])));
+        $categoryIds = array_values(array_unique(array_merge($affected['deleted_category_ids'], $affected['changed_ptc_category_ids'])));
+        $attrProductIds = array_values(array_unique(array_merge(
+            $affected['changed_attr_product_ids'],
+            $affected['deleted_product_ids'],
+            $affected['orphan_attr_product_ids'] ?? []
+        )));
         $mediaLinkProductIds = array_values(array_unique(array_merge($affected['changed_media_link_product_ids'], $affected['deleted_product_ids'])));
 
         if ($productIds !== []) {
-            $ops[] = ['table' => 'products_to_categories', 'mode' => 'delete_where_in', 'column' => 'products_id', 'values' => $productIds];
-            $ops[] = ['table' => 'xt_seo_url', 'mode' => 'delete_rows', 'key_columns' => ['link_type', 'link_id'], 'rows' => array_map(static fn(string $id): array => ['link_type' => 1, 'link_id' => $id], $productIds)];
+            $ops[] = ['table' => 'xt_products_to_categories', 'mode' => 'delete_where_in', 'column' => 'products_id', 'values' => $productIds];
         }
         if ($categoryIds !== []) {
-            $ops[] = ['table' => 'products_to_categories', 'mode' => 'delete_where_in', 'column' => 'categories_id', 'values' => $categoryIds];
-            $ops[] = ['table' => 'xt_seo_url', 'mode' => 'delete_rows', 'key_columns' => ['link_type', 'link_id'], 'rows' => array_map(static fn(string $id): array => ['link_type' => 2, 'link_id' => $id], $categoryIds)];
+            $ops[] = ['table' => 'xt_products_to_categories', 'mode' => 'delete_where_in', 'column' => 'categories_id', 'values' => $categoryIds];
         }
         if ($attrProductIds !== []) {
             $ops[] = ['table' => 'xt_plg_products_to_attributes', 'mode' => 'delete_where_in', 'column' => 'products_id', 'values' => $attrProductIds];
@@ -146,8 +246,64 @@ final class XtApiApplyService
         if ($affected['deleted_media_ids'] !== []) {
             $ops[] = ['table' => 'xt_media_link', 'mode' => 'delete_where_in', 'column' => 'm_id', 'values' => $affected['deleted_media_ids']];
         }
+        if ($affected['deleted_product_ids'] !== []) {
+            $ops[] = ['table' => 'xt_seo_url', 'mode' => 'delete_rows', 'key_columns' => ['link_type', 'link_id'], 'rows' => array_map(static fn(string $id): array => ['link_type' => 1, 'link_id' => $id], $affected['deleted_product_ids'])];
+        }
+        if ($affected['deleted_category_ids'] !== []) {
+            $ops[] = ['table' => 'xt_seo_url', 'mode' => 'delete_rows', 'key_columns' => ['link_type', 'link_id'], 'rows' => array_map(static fn(string $id): array => ['link_type' => 2, 'link_id' => $id], $affected['deleted_category_ids'])];
+        }
 
         return $ops;
+    }
+
+    /**
+     * @return array<string, int>
+     */
+    private function cleanupLocalOrphanRelations(PDO $pdo): array
+    {
+        $stats = [
+            'xt_plg_products_to_attributes_orphan_products_deleted' => 0,
+            'xt_plg_products_to_attributes_orphan_values_deleted' => 0,
+            'xt_plg_products_to_attributes_orphan_parents_deleted' => 0,
+        ];
+
+        if ($this->tableHasColumn($pdo, 'xt_plg_products_to_attributes', 'products_id') && $this->tableHasColumn($pdo, 'xt_products', 'products_id')) {
+            $stmt = $pdo->prepare(
+                'DELETE FROM xt_plg_products_to_attributes
+                 WHERE NOT EXISTS (
+                   SELECT 1 FROM xt_products p
+                   WHERE CAST(p.products_id AS TEXT) = CAST(xt_plg_products_to_attributes.products_id AS TEXT)
+                 )'
+            );
+            $stmt->execute();
+            $stats['xt_plg_products_to_attributes_orphan_products_deleted'] = $stmt->rowCount();
+        }
+
+        if ($this->tableHasColumn($pdo, 'xt_plg_products_to_attributes', 'attributes_id') && $this->tableHasColumn($pdo, 'xt_plg_products_attributes', 'attributes_id')) {
+            $stmt = $pdo->prepare(
+                'DELETE FROM xt_plg_products_to_attributes
+                 WHERE NOT EXISTS (
+                   SELECT 1 FROM xt_plg_products_attributes a
+                   WHERE CAST(a.attributes_id AS TEXT) = CAST(xt_plg_products_to_attributes.attributes_id AS TEXT)
+                 )'
+            );
+            $stmt->execute();
+            $stats['xt_plg_products_to_attributes_orphan_values_deleted'] = $stmt->rowCount();
+        }
+
+        if ($this->tableHasColumn($pdo, 'xt_plg_products_to_attributes', 'attributes_parent_id') && $this->tableHasColumn($pdo, 'xt_plg_products_attributes', 'attributes_id')) {
+            $stmt = $pdo->prepare(
+                'DELETE FROM xt_plg_products_to_attributes
+                 WHERE NOT EXISTS (
+                   SELECT 1 FROM xt_plg_products_attributes a
+                   WHERE CAST(a.attributes_id AS TEXT) = CAST(xt_plg_products_to_attributes.attributes_parent_id AS TEXT)
+                 )'
+            );
+            $stmt->execute();
+            $stats['xt_plg_products_to_attributes_orphan_parents_deleted'] = $stmt->rowCount();
+        }
+
+        return $stats;
     }
 
     /**
@@ -160,14 +316,27 @@ final class XtApiApplyService
             return [];
         }
 
-        if ($table === 'products_to_categories') {
-            return $this->fetchRowsByIds($pdo, $table, 'products_id', array_values(array_unique(array_merge($affected['changed_product_ids'], $affected['changed_category_ids']))), 'categories_id', $affected['changed_category_ids']);
+        if ($table === 'xt_products_to_categories') {
+            return $this->fetchRowsByIds(
+                $pdo,
+                $table,
+                'products_id',
+                array_values(array_unique(array_merge($affected['deleted_product_ids'], $affected['changed_ptc_product_ids']))),
+                'categories_id',
+                array_values(array_unique(array_merge($affected['deleted_category_ids'], $affected['changed_ptc_category_ids'])))
+            );
         }
         if ($table === 'xt_plg_products_to_attributes') {
             return $this->fetchRowsByIds($pdo, $table, 'products_id', array_values(array_unique(array_merge($affected['changed_attr_product_ids'], $affected['deleted_product_ids']))));
         }
         if ($table === 'xt_media_link') {
-            return $this->fetchRowsByIds($pdo, $table, 'link_id', array_values(array_unique(array_merge($affected['changed_media_link_product_ids'], $affected['deleted_product_ids']))));
+            $rows = $this->fetchRowsByIds($pdo, $table, 'link_id', array_values(array_unique(array_merge($affected['changed_media_link_product_ids'], $affected['deleted_product_ids']))));
+            return array_values(array_filter($rows, static function (array $row): bool {
+                $mId = trim((string)($row['m_id'] ?? ''));
+                $linkId = trim((string)($row['link_id'] ?? ''));
+                $type = trim((string)($row['type'] ?? ''));
+                return $mId !== '' && $linkId !== '' && $type !== '';
+            }));
         }
         if ($table === 'xt_seo_url') {
             return $this->fetchSeoRows($pdo, $affected);
@@ -226,7 +395,76 @@ final class XtApiApplyService
             $stmt->execute($categoryIds);
             $rows = array_merge($rows, $stmt->fetchAll(PDO::FETCH_ASSOC) ?: []);
         }
-        return $rows;
+        if ($rows === []) {
+            return [];
+        }
+
+        $existing = $this->loadRemoteSeoKeys();
+        if ($existing === []) {
+            return $rows;
+        }
+
+        $filtered = [];
+        foreach ($rows as $row) {
+            $key = $this->seoKey($row);
+            if ($key === null) {
+                continue;
+            }
+            if (isset($existing[$key])) {
+                continue;
+            }
+            $filtered[] = $row;
+        }
+        return $filtered;
+    }
+
+    /**
+     * @return array<string, bool>
+     */
+    private function loadRemoteSeoKeys(): array
+    {
+        if ($this->remoteSeoKeys !== null) {
+            return $this->remoteSeoKeys;
+        }
+
+        $keys = [];
+        $page = 1;
+        do {
+            $data = $this->request('GET', '/export/table/' . rawurlencode('xt_seo_url') . '?page=' . $page . '&page_size=1000');
+            if (!($data['ok'] ?? false)) {
+                break;
+            }
+            $rows = $data['rows'] ?? [];
+            if (!is_array($rows)) {
+                break;
+            }
+            foreach ($rows as $row) {
+                if (!is_array($row)) {
+                    continue;
+                }
+                $key = $this->seoKey($row);
+                if ($key !== null) {
+                    $keys[$key] = true;
+                }
+            }
+            $hasMore = (bool)($data['has_more'] ?? false);
+            $page++;
+        } while ($hasMore);
+
+        $this->remoteSeoKeys = $keys;
+        return $keys;
+    }
+
+    private function seoKey(array $row): ?string
+    {
+        $linkType = trim((string)($row['link_type'] ?? ''));
+        $linkId = trim((string)($row['link_id'] ?? ''));
+        $languageCode = trim((string)($row['language_code'] ?? ''));
+        $storeId = trim((string)($row['store_id'] ?? ''));
+        if ($linkType === '' || $linkId === '' || $languageCode === '' || $storeId === '') {
+            return null;
+        }
+        return $linkType . '|' . $linkId . '|' . $languageCode . '|' . $storeId;
     }
 
     /**
@@ -381,5 +619,10 @@ final class XtApiApplyService
     private function quoteIdentifier(string $name): string
     {
         return '"' . str_replace('"', '""', $name) . '"';
+    }
+
+    private function remoteTableName(string $table): string
+    {
+        return $table;
     }
 }

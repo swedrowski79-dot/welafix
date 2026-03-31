@@ -103,6 +103,20 @@ ON artikel_media_map(afs_artikel_id);
 CREATE INDEX IF NOT EXISTS idx_artikel_media_map_changed
 ON artikel_media_map(changed);
 
+CREATE TABLE IF NOT EXISTS artikel_warengruppe (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  afs_artikel_id TEXT NOT NULL,
+  afs_wg_id INTEGER NOT NULL,
+  position INTEGER NOT NULL DEFAULT 0,
+  source_field TEXT NULL,
+  changed INTEGER NOT NULL DEFAULT 0,
+  UNIQUE(afs_artikel_id, afs_wg_id)
+);
+CREATE INDEX IF NOT EXISTS idx_artikel_warengruppe_artikel
+ON artikel_warengruppe(afs_artikel_id);
+CREATE INDEX IF NOT EXISTS idx_artikel_warengruppe_changed
+ON artikel_warengruppe(changed);
+
 CREATE TABLE IF NOT EXISTS artikel_extra_data (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   Artikelnummer TEXT NOT NULL UNIQUE,
@@ -155,3 +169,14 @@ CREATE TABLE IF NOT EXISTS afs_update_pending (
   source_id TEXT NOT NULL,
   PRIMARY KEY(entity, source_id)
 );
+
+CREATE TABLE IF NOT EXISTS xt_products_to_categories (
+  products_id TEXT NOT NULL,
+  categories_id TEXT NOT NULL,
+  master_link TEXT NULL,
+  store_id TEXT NULL,
+  changed INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY(products_id, categories_id)
+);
+CREATE INDEX IF NOT EXISTS idx_xt_products_to_categories_changed
+ON xt_products_to_categories(changed);

@@ -80,6 +80,7 @@ final class AfsUpdateResetService
             'attributes' => 'UPDATE attributes SET changed = 0 WHERE changed = 1',
             'artikel_attribute_map' => 'UPDATE artikel_attribute_map SET changed = 0 WHERE changed = 1',
             'artikel_media_map' => 'UPDATE artikel_media_map SET changed = 0 WHERE changed = 1',
+            'artikel_warengruppe' => 'UPDATE artikel_warengruppe SET changed = 0 WHERE changed = 1',
             'Meta_Data_Artikel' => 'UPDATE Meta_Data_Artikel SET updated = 0 WHERE updated = 1',
             'Meta_Data_Waregruppen' => 'UPDATE Meta_Data_Waregruppen SET updated = 0 WHERE updated = 1',
         ];

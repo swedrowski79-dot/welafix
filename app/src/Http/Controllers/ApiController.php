@@ -567,6 +567,37 @@ final class ApiController
         ]);
     }
 
+    public function appLogTail(): void
+    {
+        $limit = isset($_GET['limit']) ? (int)$_GET['limit'] : 80;
+        $limit = max(1, min(500, $limit));
+        $path = __DIR__ . '/../../../logs/app.log';
+
+        if (!is_file($path)) {
+            $this->jsonResponse([
+                'ok' => true,
+                'path' => $path,
+                'lines' => [],
+            ]);
+            return;
+        }
+
+        $lines = @file($path, FILE_IGNORE_NEW_LINES);
+        if (!is_array($lines)) {
+            $this->jsonResponse([
+                'ok' => false,
+                'error' => 'Logdatei konnte nicht gelesen werden.',
+            ], 500);
+            return;
+        }
+
+        $this->jsonResponse([
+            'ok' => true,
+            'path' => $path,
+            'lines' => array_slice($lines, -$limit),
+        ]);
+    }
+
     public function artikelList(): void
     {
         $limit = isset($_GET['limit']) ? (int)$_GET['limit'] : 50;

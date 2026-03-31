@@ -56,6 +56,7 @@ declare(strict_types=1);
       <div class="muted" style="margin: 14px 0 8px;">XT Schritte</div>
       <div class="btn-row">
         <button class="btn" type="button" data-endpoint="/sync/xt-mapping">XT Mapping Sync</button>
+        <button class="btn" type="button" data-endpoint="/sync/daily-delta" data-sync="daily-delta">Komplettsync</button>
       </div>
     </div>
     <div class="tile">
@@ -221,6 +222,79 @@ declare(strict_types=1);
       cancelRequested = false;
     };
 
+    const loadAppLogTail = async (limit = 80) => {
+      try {
+        const response = await fetch('/api/log/app?limit=' + encodeURIComponent(String(limit)), {
+          headers: { 'Accept': 'application/json' }
+        });
+        const json = await response.json();
+        if (!json || !json.ok || !Array.isArray(json.lines)) {
+          return 'Log konnte nicht geladen werden.';
+        }
+        return json.lines.join('\n');
+      } catch (e) {
+        return 'Log konnte nicht geladen werden: ' + e.message;
+      }
+    };
+
+    const formatDuration = (value) => {
+      const ms = Number(value || 0);
+      if (!Number.isFinite(ms) || ms <= 0) return '0 ms';
+      if (ms < 1000) return ms + ' ms';
+      const seconds = ms / 1000;
+      if (seconds < 60) return seconds.toFixed(1) + ' s';
+      const minutes = Math.floor(seconds / 60);
+      const rest = seconds - (minutes * 60);
+      return minutes + ' min ' + rest.toFixed(1) + ' s';
+    };
+
+    const buildDailyDeltaSummary = (payload) => {
+      if (!payload || typeof payload !== 'object') return '';
+      const lines = [];
+      lines.push('Gesamtdauer: ' + formatDuration(payload.duration_ms));
+      const steps = payload.steps || {};
+      Object.entries(steps).forEach(([name, value]) => {
+        const duration = value && typeof value === 'object' ? value.duration_ms : 0;
+        lines.push(name + ': ' + formatDuration(duration));
+      });
+      return lines.join('\n');
+    };
+
+    const runDailyDeltaSync = async (button) => {
+      const endpoint = button.getAttribute('data-endpoint');
+      const artikelBatch = document.getElementById('artikel-batch').value;
+      const url = endpoint + '?artikel_batch=' + encodeURIComponent(artikelBatch);
+
+      button.disabled = true;
+      const originalText = button.textContent;
+      button.textContent = 'Synce…';
+      setOutput('Lade ' + url + ' ...');
+
+      try {
+        const response = await fetch(url, { headers: { 'Accept': 'application/json' } });
+        const text = await response.text();
+        let payloadText = text;
+        let summary = '';
+        try {
+          const parsed = JSON.parse(text);
+          payloadText = JSON.stringify(parsed, null, 2);
+          summary = buildDailyDeltaSummary(parsed);
+        } catch (e) {}
+        const logTail = await loadAppLogTail(120);
+        const sections = [];
+        if (summary) sections.push(summary);
+        sections.push(payloadText);
+        sections.push('--- APP LOG ---\n' + logTail);
+        setOutput(sections.join('\n\n'));
+      } catch (e) {
+        const logTail = await loadAppLogTail(120);
+        setOutput('Fehler: ' + e.message + '\n\n--- APP LOG ---\n' + logTail);
+      } finally {
+        button.disabled = false;
+        button.textContent = originalText;
+      }
+    };
+
     const loadXtBatch = async () => {
       try {
         const res = await fetch('/api/settings?key=xt_import_batch_size');
@@ -348,8 +422,13 @@ declare(strict_types=1);
       button.addEventListener('click', async () => {
         const endpoint = button.getAttribute('data-endpoint');
         const isArtikelSync = button.getAttribute('data-sync') === 'artikel';
+        const isDailyDeltaSync = button.getAttribute('data-sync') === 'daily-delta';
         if (isArtikelSync) {
           await runArtikelSync(button);
+          return;
+        }
+        if (isDailyDeltaSync) {
+          await runDailyDeltaSync(button);
           return;
         }
 

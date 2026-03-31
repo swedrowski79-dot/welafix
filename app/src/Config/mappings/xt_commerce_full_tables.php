@@ -88,6 +88,11 @@ return [
       'target' => ['table' => 'xt_plg_products_attributes'],
     ],
     [
+      'id' => 'pull_xt_plg_products_to_attributes',
+      'source' => ['table' => 'xt_plg_products_to_attributes'],
+      'target' => ['table' => 'xt_plg_products_to_attributes'],
+    ],
+    [
       'id' => 'pull_xt_media_link',
       'source' => ['table' => 'xt_media_link'],
       'target' => ['table' => 'xt_media_link'],

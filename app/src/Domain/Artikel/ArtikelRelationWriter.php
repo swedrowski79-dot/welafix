@@ -46,6 +46,21 @@ final class ArtikelRelationWriter
             'CREATE INDEX IF NOT EXISTS idx_artikel_media_map_artikel
              ON artikel_media_map(afs_artikel_id)'
         );
+        $this->pdo->exec(
+            'CREATE TABLE IF NOT EXISTS artikel_warengruppe (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                afs_artikel_id TEXT NOT NULL,
+                afs_wg_id INTEGER NOT NULL,
+                position INTEGER NOT NULL DEFAULT 0,
+                source_field TEXT NULL,
+                changed INTEGER NOT NULL DEFAULT 0,
+                UNIQUE(afs_artikel_id, afs_wg_id)
+            )'
+        );
+        $this->pdo->exec(
+            'CREATE INDEX IF NOT EXISTS idx_artikel_warengruppe_artikel
+             ON artikel_warengruppe(afs_artikel_id)'
+        );
     }
 
     /**
@@ -197,6 +212,71 @@ final class ArtikelRelationWriter
         return $changed;
     }
 
+    /**
+     * @param array<int, array{afs_wg_id:int,position:int,source_field:string}> $items
+     */
+    public function syncWarengruppeAssignments(string $afsArtikelId, array $items): int
+    {
+        $existing = $this->loadExistingWarengruppeAssignments($afsArtikelId);
+        $incoming = [];
+        foreach ($items as $item) {
+            $incoming[(string)$item['afs_wg_id']] = $item;
+        }
+
+        $changed = 0;
+        $delete = $this->pdo->prepare(
+            'DELETE FROM artikel_warengruppe
+             WHERE afs_artikel_id = :afs_artikel_id
+               AND afs_wg_id = :afs_wg_id'
+        );
+        foreach ($existing as $key => $row) {
+            if (isset($incoming[$key])) {
+                continue;
+            }
+            $delete->execute([
+                ':afs_artikel_id' => $afsArtikelId,
+                ':afs_wg_id' => $row['afs_wg_id'],
+            ]);
+            $changed++;
+        }
+
+        $upsert = $this->pdo->prepare(
+            'INSERT INTO artikel_warengruppe
+                (afs_artikel_id, afs_wg_id, position, source_field, changed)
+             VALUES
+                (:afs_artikel_id, :afs_wg_id, :position, :source_field, 1)
+             ON CONFLICT(afs_artikel_id, afs_wg_id) DO UPDATE SET
+                position = excluded.position,
+                source_field = excluded.source_field,
+                changed = CASE
+                    WHEN artikel_warengruppe.position != excluded.position
+                      OR COALESCE(artikel_warengruppe.source_field, \'\') != COALESCE(excluded.source_field, \'\')
+                    THEN 1 ELSE artikel_warengruppe.changed END'
+        );
+
+        foreach ($incoming as $key => $item) {
+            $before = $existing[$key] ?? null;
+            $upsert->execute([
+                ':afs_artikel_id' => $afsArtikelId,
+                ':afs_wg_id' => $item['afs_wg_id'],
+                ':position' => $item['position'],
+                ':source_field' => $item['source_field'],
+            ]);
+            if ($before === null
+                || (int)$before['position'] !== (int)$item['position']
+                || (string)$before['source_field'] !== (string)$item['source_field']) {
+                $changed++;
+            }
+        }
+
+        if ($changed > 0) {
+            $stmt = $this->pdo->prepare('UPDATE artikel_warengruppe SET changed = 1 WHERE afs_artikel_id = :afs_artikel_id');
+            $stmt->execute([':afs_artikel_id' => $afsArtikelId]);
+        }
+
+        return $changed;
+    }
+
     public function ensureMedia(string $filename, string $source, string $createdAt): ?int
     {
         $insert = $this->pdo->prepare(
@@ -254,6 +334,25 @@ final class ArtikelRelationWriter
         foreach ($rows as $row) {
             $key = (int)$row['position'] . '|' . strtolower((string)$row['filename']);
             $map[$key] = $row;
+        }
+        return $map;
+    }
+
+    /**
+     * @return array<string, array<string, mixed>>
+     */
+    private function loadExistingWarengruppeAssignments(string $afsArtikelId): array
+    {
+        $stmt = $this->pdo->prepare(
+            'SELECT afs_wg_id, position, source_field
+             FROM artikel_warengruppe
+             WHERE afs_artikel_id = :afs_artikel_id'
+        );
+        $stmt->execute([':afs_artikel_id' => $afsArtikelId]);
+        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+        $map = [];
+        foreach ($rows as $row) {
+            $map[(string)$row['afs_wg_id']] = $row;
         }
         return $map;
     }

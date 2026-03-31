@@ -55,7 +55,7 @@ return [
         'categories_right'           => 'calc:nested_set_right',
         'categories_level'           => 'warengruppe.Ebene+1',
         'parent_id'                  => 'lookup(xt_categories, external_id, warengruppe.parent_id, categories_id)',
-        'categories_status'          => 'calc:warengruppe_status',
+        'categories_status'          => 'default:1',
         'categories_template'        => 'default:""',
         'listing_template'           => 'default:""',
         'sort_order'                 => 'default:0',
@@ -67,7 +67,8 @@ return [
         'last_modified'              => 'calc:now',
         'category_custom_link'       => 'default:0',
         'category_custom_link_type'  => 'default:""',
-        'google_product_cat'         => 'default:""',
+        'category_custom_link_id'    => 'default:0',
+        'google_product_cat'         => 'default:0',
         'categories_master_image'    => 'warengruppe.Bild_gross oder lookup(xt_categories, external_id, warengruppe.afs_wg_id, categories_master_image)',
       ],
     ],
@@ -96,6 +97,7 @@ return [
       'table' => 'xt_media',
       'base' => 'media',
       'primary_key' => 'id',
+      'unique_key' => ['external_id'],
       'mode' => 'upsert',
       'columns' => [
         'id'                => 'auto',
@@ -219,7 +221,7 @@ return [
         'products_shippingtime'          => 'artikel.ZusatzFeld01',
         'products_shippingtime_nostock'  => 'default:""',
         'products_model'                  => 'artikel.artikelnummer',
-        'products_master_flag'            => 'artikel.is_slave',
+        'products_master_flag'            => 'artikel.is_master oder default:0',
         'products_master_model'           => 'artikel.master_modell',
 
         // Excel hatte "default.2" → normalisiert zu default:2
@@ -292,8 +294,8 @@ return [
         'ml_id'     => 'auto',
         'm_id'      => 'lookup(xt_media, external_id, artikel_media_map.media_id, id)',
         'link_id'   => 'lookup(xt_products, external_id, artikel_media_map.afs_artikel_id, products_id)',
-        'class'     => 'default:""',
-        'type'      => 'default:""',
+        'class'     => 'default:product',
+        'type'      => 'default:images',
         'sort_order'=> 'artikel_media_map.position',
       ],
     ],
@@ -301,8 +303,8 @@ return [
     // =========================
     // XT: Produkt ↔ Kategorie Zuordnung
     // =========================
-    'products_to_categories' => [
-      'table' => 'products_to_categories',
+    'xt_products_to_categories' => [
+      'table' => 'xt_products_to_categories',
       'base' => 'artikel',
       'primary_key' => ['products_id', 'categories_id'],
       'mode' => 'upsert',

@@ -27,3 +27,43 @@
 [2026-03-31T18:15:29+00:00] mssql_debug host=10.0.1.82 port=1435 db=AFS_2018 user=sa
 [2026-03-31T18:15:29+00:00] missing wg mapping: warengruppe_id=2 artikelnummer=GANI-080
 [2026-03-31T18:16:04+00:00] mssql_debug host=10.0.1.82 port=1435 db=AFS_2018 user=sa
+[2026-03-31T18:29:48+00:00] mssql_debug host=10.0.1.82 port=1435 db=AFS_2018 user=sa
+[2026-03-31T18:39:06+00:00] mssql_debug host=10.0.1.82 port=1435 db=AFS_2018 user=sa
+[2026-03-31T18:39:25+00:00] mssql_debug host=10.0.1.82 port=1435 db=AFS_2018 user=sa
+[2026-03-31T18:39:37+00:00] mssql_debug host=10.0.1.82 port=1435 db=AFS_2018 user=sa
+[2026-03-31T18:45:56+00:00] mssql_debug host=10.0.1.82 port=1435 db=AFS_2018 user=sa
+[2026-03-31T18:45:57+00:00] missing wg mapping: warengruppe_id=2 artikelnummer=GANI-080
+[2026-03-31T18:53:19+00:00] mssql_debug host=10.0.1.82 port=1435 db=AFS_2018 user=sa
+[2026-03-31T18:53:19+00:00] missing wg mapping: warengruppe_id=2 artikelnummer=GANI-080
+[2026-03-31T19:01:02+00:00] invalid_category_offline artikelnummer=SPDA-06 afs_artikel_id=2654
+[2026-03-31T19:01:02+00:00] invalid_category_offline artikelnummer=CLBZ-38 afs_artikel_id=2849
+[2026-03-31T19:01:02+00:00] invalid_category_offline artikelnummer=FLNZ-038 afs_artikel_id=2852
+[2026-03-31T19:01:02+00:00] invalid_category_offline artikelnummer=Mindermengenzuschlag afs_artikel_id=4843
+[2026-03-31T19:01:02+00:00] invalid_category_offline artikelnummer=WHS-02 afs_artikel_id=14998
+[2026-03-31T19:01:02+00:00] invalid_category_offline artikelnummer=P02-80-0010 afs_artikel_id=38595
+[2026-03-31T19:01:02+00:00] invalid_category_offline artikelnummer=PKBR-038 afs_artikel_id=47015
+[2026-03-31T19:01:02+00:00] invalid_category_offline artikelnummer=V-GR-1/8-6 afs_artikel_id=47264
+[2026-03-31T19:01:02+00:00] invalid_category_offline artikelnummer=SPLV-01-EX afs_artikel_id=48140
+[2026-03-31T19:01:02+00:00] invalid_category_offline artikelnummer=CLPT-038 afs_artikel_id=51615
+[2026-03-31T19:01:02+00:00] invalid_category_offline artikelnummer=CLPH-100 afs_artikel_id=51617
+[2026-03-31T19:01:02+00:00] invalid_category_offline artikelnummer=STBP-R-000 afs_artikel_id=56679
+[2026-03-31T19:01:02+00:00] invalid_category_offline artikelnummer=GAEA-000 afs_artikel_id=56902
+[2026-03-31T19:01:02+00:00] invalid_category_offline artikelnummer=CLPH-076 afs_artikel_id=59281
+[2026-03-31T19:01:02+00:00] invalid_category_offline artikelnummer=HOHO-03 afs_artikel_id=59282
+[2026-03-31T19:01:02+00:00] invalid_category_offline artikelnummer=HOTR-050 Schlauchverbinder afs_artikel_id=60040
+[2026-03-31T19:01:02+00:00] invalid_category_offline artikelnummer=S-BSBE-355-90 afs_artikel_id=60909
+[2026-03-31T19:01:02+00:00] invalid_category_offline artikelnummer=CLBR-038-050 afs_artikel_id=1212
+[2026-03-31T19:01:02+00:00] invalid_category_offline artikelnummer=SPDA-09 afs_artikel_id=1482
+[2026-03-31T19:01:02+00:00] invalid_category_offline artikelnummer=V-VE-1/8" afs_artikel_id=1502
+[2026-03-31T19:01:02+00:00] invalid_category_offline artikelnummer=SPLV-01 afs_artikel_id=1704
+[2026-03-31T19:01:02+00:00] invalid_category_offline artikelnummer=V-TS-6 afs_artikel_id=2413
+[2026-03-31T19:04:36+00:00] mssql_debug host=10.0.1.82 port=1435 db=AFS_2018 user=sa
+[2026-03-31T19:04:51+00:00] mssql_debug host=10.0.1.82 port=1435 db=AFS_2018 user=sa
+[2026-03-31T20:09:10+00:00] mssql_debug host=10.0.1.82 port=1435 db=AFS_2018 user=sa
+[2026-03-31T20:55:12+00:00] mssql_debug host=10.0.1.82 port=1435 db=AFS_2018 user=sa
+[2026-03-31T20:56:54+00:00] mssql_debug host=10.0.1.82 port=1435 db=AFS_2018 user=sa
+[2026-03-31T21:00:23+00:00] mssql_debug host=10.0.1.82 port=1435 db=AFS_2018 user=sa
+[2026-03-31T21:00:23+00:00] mssql_debug host=10.0.1.82 port=1435 db=AFS_2018 user=sa
+[2026-03-31T21:00:52+00:00] mssql_debug host=10.0.1.82 port=1435 db=AFS_2018 user=sa
+[2026-03-31T21:00:56+00:00] mssql_debug host=10.0.1.82 port=1435 db=AFS_2018 user=sa
+[2026-03-31T21:00:57+00:00] missing wg mapping: warengruppe_id=2 artikelnummer=GANI-080

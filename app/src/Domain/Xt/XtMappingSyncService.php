@@ -138,7 +138,8 @@ final class XtMappingSyncService
 
             $stats['targets'][$targetName] = $totals + ['table' => $table];
 
-            if ($table === 'xt_categories' && !empty($totals['needs_nested_set'])) {
+            if ($table === 'xt_categories' && (!empty($totals['needs_nested_set']) || $totals['source_rows'] > 0 || $this->xtCategoriesNeedNestedSetRepair($pdo))) {
+                $this->repairXtCategoriesDefaults($pdo);
                 $rebuilt = $this->rebuildNestedSet($pdo);
                 $stats['nested_set_rebuild'] = $rebuilt;
             }
@@ -162,6 +163,7 @@ final class XtMappingSyncService
             $stats['warnings_path'] = $this->getLogsDir() . '/xt_mapping_warnings.log';
         }
         $stats['deleted_cleanup'] = $deleteSync->cleanupDeleted();
+        $this->repairXtCategoriesDefaults($pdo);
         return $stats;
     }
 
@@ -218,6 +220,10 @@ final class XtMappingSyncService
 
                 $pkValues = $this->buildPkValues($pkCols, $values);
                 $uniqueValues = $this->buildPkValues($uniqueCols, $values);
+                if ($pkCols !== [] && !$this->hasUsablePrimaryKey($pkCols, $pkValues, $autoCols) && !isset($values['external_id']) && $uniqueCols === []) {
+                    $unchanged++;
+                    continue;
+                }
 
                 $hasPk = $pkCols !== [] && $this->hasNonAutoPk($pkValues);
                 $hasUnique = $uniqueCols !== [] && $this->hasNonAutoPk($uniqueValues);
@@ -695,7 +701,10 @@ final class XtMappingSyncService
         }
         if ($name === 'warengruppe_status') {
             $row = $context['warengruppe'] ?? [];
-            return (int)(($row['is_deleted'] ?? 0) ? 0 : ($row['Internet'] ?? 1));
+            if (($row['is_deleted'] ?? 0)) {
+                return 0;
+            }
+            return ((string)($row['Internet'] ?? '0') === '0') ? 1 : 0;
         }
         if ($name === 'media_status') {
             $row = $context['media'] ?? [];
@@ -815,6 +824,28 @@ final class XtMappingSyncService
     }
 
     /**
+     * @param array<int, string> $pkCols
+     * @param array<string, mixed> $pkValues
+     * @param array<string, bool> $autoCols
+     */
+    private function hasUsablePrimaryKey(array $pkCols, array $pkValues, array $autoCols): bool
+    {
+        foreach ($pkCols as $col) {
+            if (isset($autoCols[$col])) {
+                continue;
+            }
+            if (!array_key_exists($col, $pkValues)) {
+                return false;
+            }
+            $value = $pkValues[$col];
+            if ($value === null || $value === '') {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
      * @param array<string, string> $columns
      * @param array<string, true> $existing
      * @return array<int, string>
@@ -827,12 +858,6 @@ final class XtMappingSyncService
                 continue;
             }
             if (strtolower((string)$expr) === 'auto') {
-                continue;
-            }
-            if ($this->isDefaultExpr((string)$expr)) {
-                continue;
-            }
-            if (str_starts_with((string)$expr, 'calc:')) {
                 continue;
             }
             if (!isset($existing[strtolower($col)])) {
@@ -1238,11 +1263,12 @@ final class XtMappingSyncService
     {
         $stmt = $pdo->prepare('UPDATE xt_categories SET categories_left = :l, categories_right = :r WHERE categories_id = :id');
         $childrenStmt = $pdo->prepare('SELECT categories_id, sort_order FROM xt_categories WHERE parent_id = :pid ORDER BY sort_order ASC, categories_id ASC');
+        $rootStmt = $pdo->prepare('SELECT categories_id, sort_order FROM xt_categories WHERE parent_id IS NULL ORDER BY sort_order ASC, categories_id ASC');
         $counter = 1;
         $updated = 0;
 
         $stack = [
-            ['id' => 0, 'idx' => 0, 'started' => false, 'left' => 0, 'children' => null],
+            ['id' => null, 'idx' => 0, 'started' => false, 'left' => 0, 'children' => null],
         ];
 
         while ($stack !== []) {
@@ -1254,8 +1280,13 @@ final class XtMappingSyncService
             }
 
             if ($node['children'] === null) {
-                $childrenStmt->execute([':pid' => $node['id']]);
-                $rows = $childrenStmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+                if ($node['id'] === null) {
+                    $rootStmt->execute();
+                    $rows = $rootStmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+                } else {
+                    $childrenStmt->execute([':pid' => $node['id']]);
+                    $rows = $childrenStmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+                }
                 $childIds = [];
                 foreach ($rows as $row) {
                     $childIds[] = (int)($row['categories_id'] ?? 0);
@@ -1282,6 +1313,20 @@ final class XtMappingSyncService
         }
 
         return $updated;
+    }
+
+    private function xtCategoriesNeedNestedSetRepair(PDO $pdo): bool
+    {
+        $stmt = $pdo->query('SELECT 1 FROM xt_categories WHERE categories_left IS NULL OR categories_right IS NULL LIMIT 1');
+        return $stmt ? ($stmt->fetchColumn() !== false) : false;
+    }
+
+    private function repairXtCategoriesDefaults(PDO $pdo): void
+    {
+        $pdo->exec("UPDATE xt_categories SET categories_status = '1' WHERE COALESCE(categories_status, '') IN ('', '0')");
+        $pdo->exec("UPDATE xt_categories SET category_custom_link_id = '0' WHERE category_custom_link_id IS NULL OR category_custom_link_id = ''");
+        $pdo->exec("UPDATE xt_categories SET google_product_cat = '0' WHERE google_product_cat IS NULL OR google_product_cat = ''");
+        $pdo->exec("UPDATE xt_categories SET changed = 1 WHERE categories_status = '1' OR category_custom_link_id = '0' OR google_product_cat = '0'");
     }
 
     private function createTable(PDO $pdo, string $table, array $columns, mixed $primaryKey): void
@@ -1447,7 +1492,6 @@ final class XtMappingSyncService
         foreach ($columns as $col => $expr) {
             if (!isset($existingCols[strtolower($col)])) continue;
             if (strtolower((string)$expr) === 'auto') continue;
-            if ($this->isDefaultExpr((string)$expr)) continue;
             if (in_array($col, $pkCols, true)) continue;
             $cols[] = $col;
         }
@@ -1526,7 +1570,6 @@ final class XtMappingSyncService
         foreach ($columns as $col => $expr) {
             if (!isset($existingCols[strtolower($col)])) continue;
             if (strtolower((string)$expr) === 'auto') continue;
-            if ($this->isDefaultExpr((string)$expr)) continue;
             if (in_array($col, $pkCols, true)) continue;
             $sets[] = $this->quoteIdentifier($col) . ' = :' . $col;
         }

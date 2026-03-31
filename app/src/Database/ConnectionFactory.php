@@ -128,12 +128,14 @@ final class ConnectionFactory
         $this->ensureAttributesSchema($pdo);
         $this->ensureArtikelAttributeMapTable($pdo);
         $this->ensureArtikelMediaMapTable($pdo);
+        $this->ensureArtikelWarengruppeTable($pdo);
         $this->ensureSettingsTable($pdo);
         $this->ensureArtikelExtraDataTable($pdo);
         $this->ensureWarengruppeExtraDataTable($pdo);
         $this->ensureMetaDataArtikelTable($pdo);
         $this->ensureMetaDataWarengruppenTable($pdo);
         $this->ensureAfsUpdatePendingTable($pdo);
+        $this->ensureXtProductsToCategoriesTable($pdo);
     }
 
     /**
@@ -319,6 +321,34 @@ final class ConnectionFactory
         );
     }
 
+    private function ensureArtikelWarengruppeTable(PDO $pdo): void
+    {
+        $pdo->exec(
+            'CREATE TABLE IF NOT EXISTS artikel_warengruppe (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                afs_artikel_id TEXT NOT NULL,
+                afs_wg_id INTEGER NOT NULL,
+                position INTEGER NOT NULL DEFAULT 0,
+                source_field TEXT NULL,
+                changed INTEGER NOT NULL DEFAULT 0,
+                UNIQUE(afs_artikel_id, afs_wg_id)
+            )'
+        );
+        $pdo->exec(
+            'CREATE INDEX IF NOT EXISTS idx_artikel_warengruppe_artikel
+             ON artikel_warengruppe(afs_artikel_id)'
+        );
+        $this->ensureColumns($pdo, 'artikel_warengruppe', [
+            'position' => 'INTEGER NOT NULL DEFAULT 0',
+            'source_field' => 'TEXT NULL',
+            'changed' => 'INTEGER NOT NULL DEFAULT 0',
+        ]);
+        $pdo->exec(
+            'CREATE INDEX IF NOT EXISTS idx_artikel_warengruppe_changed
+             ON artikel_warengruppe(changed)'
+        );
+    }
+
     private function ensureArtikelExtraDataTable(PDO $pdo): void
     {
         $pdo->exec(
@@ -386,6 +416,34 @@ final class ConnectionFactory
                 PRIMARY KEY(entity, source_id)
             )'
         );
+    }
+
+    private function ensureXtProductsToCategoriesTable(PDO $pdo): void
+    {
+        $pdo->exec(
+            'CREATE TABLE IF NOT EXISTS xt_products_to_categories (
+                products_id TEXT NOT NULL,
+                categories_id TEXT NOT NULL,
+                master_link TEXT NULL,
+                store_id TEXT NULL,
+                changed INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY(products_id, categories_id)
+            )'
+        );
+        $this->ensureColumns($pdo, 'xt_products_to_categories', [
+            'master_link' => 'TEXT NULL',
+            'store_id' => 'TEXT NULL',
+            'changed' => 'INTEGER NOT NULL DEFAULT 0',
+        ]);
+        $pdo->exec('CREATE INDEX IF NOT EXISTS idx_xt_products_to_categories_changed ON xt_products_to_categories(changed)');
+        $oldExists = (int)$pdo->query("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='products_to_categories'")->fetchColumn();
+        if ($oldExists > 0) {
+            $pdo->exec(
+                "INSERT OR IGNORE INTO xt_products_to_categories (products_id, categories_id, master_link, store_id, changed)
+                 SELECT products_id, categories_id, master_link, store_id, COALESCE(changed, 0)
+                 FROM products_to_categories"
+            );
+        }
     }
 
     private function renameColumnIfExists(PDO $pdo, string $table, string $from, string $to): void

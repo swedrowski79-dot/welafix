@@ -9,6 +9,7 @@ use Welafix\Domain\Afs\AfsVisibilityReconcileService;
 use Welafix\Domain\Artikel\ArtikelSyncService;
 use Welafix\Domain\Dokument\DokumentSyncService;
 use Welafix\Domain\Export\TemplateExportService;
+use Welafix\Domain\FileDb\FileDbTemplateApplier;
 use Welafix\Domain\Media\MediaSyncService;
 use Welafix\Domain\Meta\MetaFillService;
 use Welafix\Domain\Warengruppe\WarengruppeSyncService;
@@ -28,6 +29,31 @@ final class DailyDeltaSyncService
             'ok' => true,
             'steps' => [],
         ];
+
+        $start = microtime(true);
+        $pdo = $this->factory->sqlite();
+        $pdo->exec('PRAGMA busy_timeout = 5000');
+        $applier = new FileDbTemplateApplier();
+        $fileDbStats = [
+            'ok' => true,
+            'filedb_mode' => strtolower((string)env('FILEDB_MODE', 'read')),
+        ];
+        $pdo->beginTransaction();
+        try {
+            $pdo->exec('DELETE FROM artikel_extra_data');
+            $pdo->exec('DELETE FROM warengruppe_extra_data');
+            $fileDbStats['artikel'] = $applier->importArtikelDirectories($pdo);
+            $fileDbStats['warengruppe'] = $applier->importWarengruppeDirectories($pdo);
+            $pdo->commit();
+        } catch (\Throwable $e) {
+            if ($pdo->inTransaction()) {
+                $pdo->rollBack();
+            }
+            throw $e;
+        }
+        $this->markSourcesChangedAfterFileDb($pdo, $fileDbStats);
+        $fileDbStats['duration_ms'] = (int)round((microtime(true) - $start) * 1000);
+        $stats['steps']['filedb'] = $fileDbStats;
 
         $templateExport = new TemplateExportService();
 
@@ -95,5 +121,21 @@ final class DailyDeltaSyncService
         $stats['steps']['reset']['duration_ms'] = (int)round((microtime(true) - $start) * 1000);
 
         return $stats;
+    }
+
+    /**
+     * @param array<string, mixed> $fileDbStats
+     */
+    private function markSourcesChangedAfterFileDb(\PDO $pdo, array $fileDbStats): void
+    {
+        $artikelImported = (int)($fileDbStats['artikel']['imported'] ?? 0);
+        $warengruppeImported = (int)($fileDbStats['warengruppe']['imported'] ?? 0);
+
+        if ($artikelImported > 0) {
+            $pdo->exec('UPDATE artikel SET changed = 1 WHERE COALESCE(is_deleted, 0) = 0');
+        }
+        if ($warengruppeImported > 0) {
+            $pdo->exec('UPDATE warengruppe SET changed = 1 WHERE COALESCE(is_deleted, 0) = 0');
+        }
     }
 }

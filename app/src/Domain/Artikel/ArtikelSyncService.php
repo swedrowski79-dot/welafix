@@ -58,7 +58,7 @@ final class ArtikelSyncService
         $mapping['select'] = $selectFields;
         $this->schemaSync->ensureSqliteColumnsMatchMssql($mssql, $pdo, 'dbo.Artikel', 'artikel', $selectFields);
         $keyField = (string)(($mapping['source']['key'] ?? 'Artikel') ?: 'Artikel');
-        $deltaOnly = $this->shouldUseSourceUpdateFilter($mapping, $pdo, 'artikel');
+        $deltaOnly = $this->resolveDeltaOnlyMode($mapping, $pdo, 'artikel', $afterKey);
         $afsQueue = new AfsUpdateQueue($pdo);
 
         try {
@@ -107,6 +107,7 @@ final class ArtikelSyncService
             $normalCount = 0;
             $attributeAssignmentsWritten = 0;
             $mediaAssignmentsWritten = 0;
+            $warengruppeAssignmentsWritten = 0;
 
             foreach ($rows as $row) {
                 $row = array_intersect_key($row, $allowedLookup);
@@ -199,6 +200,8 @@ final class ArtikelSyncService
 
                         $mediaAssignments = $this->buildMediaAssignments($row, $seenAt, $relationWriter);
                         $mediaAssignmentsWritten += $relationWriter->syncMediaAssignments($afsArtikelId, $mediaAssignments);
+                        $warengruppeAssignments = $this->buildWarengruppeAssignments($row);
+                        $warengruppeAssignmentsWritten += $relationWriter->syncWarengruppeAssignments($afsArtikelId, $warengruppeAssignments);
 
                     } catch (\Throwable $e) {
                         $batchStats['errors_count']++;
@@ -217,6 +220,7 @@ final class ArtikelSyncService
                 $batchStats['attributes_children_created'] = $attributesBuilder->childrenCreated;
                 $batchStats['attribute_assignments_written'] = $attributeAssignmentsWritten;
                 $batchStats['media_assignments_written'] = $mediaAssignmentsWritten;
+                $batchStats['warengruppe_assignments_written'] = $warengruppeAssignmentsWritten;
             } catch (\Throwable $e) {
                 $pdo->rollBack();
                 throw $e;
@@ -323,6 +327,47 @@ final class ArtikelSyncService
         $this->log("missing wg mapping: warengruppe_id={$warengruppeId} artikelnummer={$artikelnummer}");
     }
 
+    /**
+     * @param array<string, mixed> $row
+     * @return array<int, array{afs_wg_id:int,position:int,source_field:string}>
+     */
+    private function buildWarengruppeAssignments(array $row): array
+    {
+        $items = [];
+        $seen = [];
+        $position = 0;
+
+        $add = static function (int $wgId, string $sourceField) use (&$items, &$seen, &$position): void {
+            if ($wgId <= 0 || isset($seen[$wgId])) {
+                return;
+            }
+            $seen[$wgId] = true;
+            $items[] = [
+                'afs_wg_id' => $wgId,
+                'position' => $position++,
+                'source_field' => $sourceField,
+            ];
+        };
+
+        $primary = (int)trim((string)($row['Warengruppe'] ?? '0'));
+        if ($primary > 0) {
+            $add($primary, 'Warengruppe');
+        }
+
+        $multi = trim((string)($row['Warengruppen'] ?? ''));
+        if ($multi !== '' && $items === []) {
+            foreach (preg_split('/[^\d]+/', $multi) ?: [] as $token) {
+                $token = trim((string)$token);
+                if ($token === '') {
+                    continue;
+                }
+                $add((int)$token, 'Warengruppen');
+            }
+        }
+
+        return $items;
+    }
+
     private function ensureStateTable(\PDO $pdo): void
     {
         $pdo->exec(
@@ -337,17 +382,19 @@ final class ArtikelSyncService
                 batches INTEGER,
                 started_at TEXT,
                 updated_at TEXT,
-                done INTEGER
+                done INTEGER,
+                delta_only INTEGER DEFAULT 0
             )'
         );
+        $this->ensureSyncStateDeltaOnlyColumn($pdo);
     }
 
     private function resetState(\PDO $pdo): void
     {
         $now = (new DateTimeImmutable('now', new DateTimeZone('UTC')))->format(DATE_ATOM);
         $stmt = $pdo->prepare(
-            'INSERT INTO sync_state (type, last_key, total_fetched, inserted, updated, unchanged, errors_count, batches, started_at, updated_at, done)
-             VALUES (:type, :last_key, 0, 0, 0, 0, 0, 0, :started_at, :updated_at, 0)
+            'INSERT INTO sync_state (type, last_key, total_fetched, inserted, updated, unchanged, errors_count, batches, started_at, updated_at, done, delta_only)
+             VALUES (:type, :last_key, 0, 0, 0, 0, 0, 0, :started_at, :updated_at, 0, 0)
              ON CONFLICT(type) DO UPDATE SET
                last_key = :last_key,
                total_fetched = 0,
@@ -358,7 +405,8 @@ final class ArtikelSyncService
                batches = 0,
                started_at = :started_at,
                updated_at = :updated_at,
-               done = 0'
+               done = 0,
+               delta_only = 0'
         );
         $stmt->execute([
             ':type' => self::STATE_TYPE,
@@ -391,8 +439,8 @@ final class ArtikelSyncService
         }
 
         $stmt = $pdo->prepare(
-            'INSERT INTO sync_state (type, last_key, total_fetched, inserted, updated, unchanged, errors_count, batches, started_at, updated_at, done)
-             VALUES (:type, :last_key, :total_fetched, :inserted, :updated, :unchanged, :errors_count, :batches, :started_at, :updated_at, :done)
+            'INSERT INTO sync_state (type, last_key, total_fetched, inserted, updated, unchanged, errors_count, batches, started_at, updated_at, done, delta_only)
+             VALUES (:type, :last_key, :total_fetched, :inserted, :updated, :unchanged, :errors_count, :batches, :started_at, :updated_at, :done, :delta_only)
              ON CONFLICT(type) DO UPDATE SET
                last_key = :last_key,
                total_fetched = :total_fetched,
@@ -402,7 +450,8 @@ final class ArtikelSyncService
                errors_count = :errors_count,
                batches = :batches,
                updated_at = :updated_at,
-               done = :done'
+               done = :done,
+               delta_only = :delta_only'
         );
 
         $stmt->execute([
@@ -417,6 +466,7 @@ final class ArtikelSyncService
             ':started_at' => $state['started_at'] ?? $now,
             ':updated_at' => $now,
             ':done' => $state['done'] ?? 0,
+            ':delta_only' => $state['delta_only'] ?? 0,
         ]);
 
         return $state;
@@ -501,6 +551,34 @@ final class ArtikelSyncService
         }
         $count = (int)$pdo->query('SELECT COUNT(*) FROM ' . $this->quoteIdentifier($table))->fetchColumn();
         return $count > 0;
+    }
+
+    private function resolveDeltaOnlyMode(array $mapping, \PDO $pdo, string $table, string $afterKey): bool
+    {
+        if ($afterKey !== '') {
+            $state = $this->loadState($pdo);
+            return (int)($state['delta_only'] ?? 0) === 1;
+        }
+
+        $deltaOnly = $this->shouldUseSourceUpdateFilter($mapping, $pdo, $table);
+        $stmt = $pdo->prepare('UPDATE sync_state SET delta_only = :delta_only WHERE type = :type');
+        $stmt->execute([
+            ':delta_only' => $deltaOnly ? 1 : 0,
+            ':type' => self::STATE_TYPE,
+        ]);
+        return $deltaOnly;
+    }
+
+    private function ensureSyncStateDeltaOnlyColumn(\PDO $pdo): void
+    {
+        $stmt = $pdo->query('PRAGMA table_info(sync_state)');
+        $rows = $stmt ? ($stmt->fetchAll(\PDO::FETCH_ASSOC) ?: []) : [];
+        foreach ($rows as $row) {
+            if (strcasecmp((string)($row['name'] ?? ''), 'delta_only') === 0) {
+                return;
+            }
+        }
+        $pdo->exec('ALTER TABLE sync_state ADD COLUMN delta_only INTEGER DEFAULT 0');
     }
 
     /**

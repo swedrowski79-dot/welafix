@@ -40,6 +40,7 @@ return [
 
     'VK3',              // Verkaufspreis
     'Warengruppe',
+    'Warengruppen',
     'Umsatzsteuer',
 
     'Zusatzfeld01',     // Mindestmenge

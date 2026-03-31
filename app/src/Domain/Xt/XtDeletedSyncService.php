@@ -3,6 +3,8 @@ declare(strict_types=1);
 
 namespace Welafix\Domain\Xt;
 
+use DateTimeImmutable;
+use DateTimeZone;
 use PDO;
 use Welafix\Database\ConnectionFactory;
 
@@ -17,13 +19,15 @@ final class XtDeletedSyncService
     {
         $pdo = $this->factory->sqlite();
         $productIds = $this->lookupXtIds($pdo, 'xt_products', 'products_id', 'external_id', 'SELECT afs_artikel_id FROM artikel WHERE changed = 1');
+        $relationProductIds = $this->lookupXtIds($pdo, 'xt_products', 'products_id', 'external_id', 'SELECT afs_artikel_id FROM artikel_warengruppe WHERE changed = 1');
         $attributeProductIds = $this->lookupXtIds($pdo, 'xt_products', 'products_id', 'external_id', 'SELECT afs_artikel_id FROM artikel_attribute_map WHERE changed = 1');
         $mediaProductIds = $this->lookupXtIds($pdo, 'xt_products', 'products_id', 'external_id', 'SELECT afs_artikel_id FROM artikel_media_map WHERE changed = 1');
         $categoryIds = $this->lookupXtIds($pdo, 'xt_categories', 'categories_id', 'external_id', 'SELECT afs_wg_id FROM warengruppe WHERE changed = 1');
+        $relationCategoryIds = $this->lookupXtIds($pdo, 'xt_categories', 'categories_id', 'external_id', 'SELECT afs_wg_id FROM artikel_warengruppe WHERE changed = 1');
 
         return [
-            'products_to_categories_deleted' => $this->deleteByIds($pdo, 'products_to_categories', 'products_id', $productIds)
-                + $this->deleteByIds($pdo, 'products_to_categories', 'categories_id', $categoryIds),
+            'products_to_categories_deleted' => $this->deleteByIds($pdo, 'xt_products_to_categories', 'products_id', array_values(array_unique(array_merge($productIds, $relationProductIds))))
+                + $this->deleteByIds($pdo, 'xt_products_to_categories', 'categories_id', array_values(array_unique(array_merge($categoryIds, $relationCategoryIds)))),
             'attributes_deleted' => $this->deleteByIds($pdo, 'xt_plg_products_to_attributes', 'products_id', $attributeProductIds),
             'media_links_deleted' => $this->deleteByIds($pdo, 'xt_media_link', 'link_id', $mediaProductIds),
         ];
@@ -43,14 +47,14 @@ final class XtDeletedSyncService
             'products_disabled' => $this->disableByIds($pdo, 'xt_products', 'products_id', 'products_status', $deletedProductIds),
             'categories_disabled' => $this->disableByIds($pdo, 'xt_categories', 'categories_id', 'categories_status', $deletedCategoryIds),
             'media_disabled' => $this->disableByIds($pdo, 'xt_media', 'id', 'status', $deletedMediaIds),
-            'products_to_categories_deleted' => $this->deleteByIds($pdo, 'products_to_categories', 'products_id', $deletedProductIds)
-                + $this->deleteByIds($pdo, 'products_to_categories', 'categories_id', $deletedCategoryIds),
+            'products_to_categories_deleted' => $this->deleteByIds($pdo, 'xt_products_to_categories', 'products_id', $deletedProductIds)
+                + $this->deleteByIds($pdo, 'xt_products_to_categories', 'categories_id', $deletedCategoryIds),
             'attributes_deleted' => $this->deleteByIds($pdo, 'xt_plg_products_to_attributes', 'products_id', $deletedProductIds),
             'media_links_deleted' => $this->deleteByIds($pdo, 'xt_media_link', 'link_id', $deletedProductIds)
                 + $this->deleteByIds($pdo, 'xt_media_link', 'm_id', $deletedMediaIds),
             'seo_products_deleted' => $this->deleteSeoByIds($pdo, 1, $deletedProductIds),
             'seo_categories_deleted' => $this->deleteSeoByIds($pdo, 2, $deletedCategoryIds),
-        ];
+        ] + $this->offlineInvalidCategoryProducts($pdo);
     }
 
     /**
@@ -138,5 +142,62 @@ final class XtDeletedSyncService
     private function quoteIdentifier(string $name): string
     {
         return '"' . str_replace('"', '""', $name) . '"';
+    }
+
+    /**
+     * @return array<string, int>
+     */
+    private function offlineInvalidCategoryProducts(PDO $pdo): array
+    {
+        $rows = $pdo->query(
+            'SELECT DISTINCT p.products_id, x.external_id AS afs_artikel_id, a.artikelnummer
+             FROM xt_products_to_categories p
+             JOIN xt_products x ON x.products_id = p.products_id
+             LEFT JOIN artikel a ON a.afs_artikel_id = x.external_id
+             WHERE p.categories_id IS NULL OR CAST(p.categories_id AS TEXT) = \'\''
+        )?->fetchAll(PDO::FETCH_ASSOC) ?: [];
+
+        if ($rows === []) {
+            return [
+                'invalid_category_products_offlined' => 0,
+                'invalid_products_to_categories_deleted' => 0,
+            ];
+        }
+
+        $productIds = [];
+        foreach ($rows as $row) {
+            $id = trim((string)($row['products_id'] ?? ''));
+            if ($id !== '') {
+                $productIds[] = $id;
+            }
+            $artikelnummer = trim((string)($row['artikelnummer'] ?? ''));
+            $afsArtikelId = trim((string)($row['afs_artikel_id'] ?? ''));
+            $this->logInvalidCategoryArticle($artikelnummer, $afsArtikelId);
+        }
+        $productIds = array_values(array_unique($productIds));
+
+        $offlined = $this->disableByIds($pdo, 'xt_products', 'products_id', 'products_status', $productIds);
+        $deleted = 0;
+        $stmt = $pdo->prepare('DELETE FROM xt_products_to_categories WHERE categories_id IS NULL OR CAST(categories_id AS TEXT) = \'\'');
+        $stmt->execute();
+        $deleted += $stmt->rowCount();
+
+        return [
+            'invalid_category_products_offlined' => $offlined,
+            'invalid_products_to_categories_deleted' => $deleted,
+        ];
+    }
+
+    private function logInvalidCategoryArticle(string $artikelnummer, string $afsArtikelId): void
+    {
+        $timestamp = (new DateTimeImmutable('now', new DateTimeZone('UTC')))->format(DATE_ATOM);
+        $line = sprintf(
+            "[%s] invalid_category_offline artikelnummer=%s afs_artikel_id=%s\n",
+            $timestamp,
+            $artikelnummer !== '' ? $artikelnummer : '-',
+            $afsArtikelId !== '' ? $afsArtikelId : '-'
+        );
+        $path = __DIR__ . '/../../../logs/app.log';
+        @file_put_contents($path, $line, FILE_APPEND);
     }
 }
