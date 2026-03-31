@@ -24,13 +24,24 @@ final class AttributesBuilder
 
     public function ingestRow(array $row): void
     {
+        $this->ingestRowWithAssignments($row);
+    }
+
+    /**
+     * @param array<string, mixed> $row
+     * @return array<int, array{position:int,parent_id:int,attribute_id:int,name:string,value:string}>
+     */
+    public function ingestRowWithAssignments(array $row): array
+    {
         $pairs = [
             ['Zusatzfeld03', 'Zusatzfeld15'],
             ['Zusatzfeld04', 'Zusatzfeld16'],
             ['Zusatzfeld05', 'Zusatzfeld17'],
         ];
 
-        foreach ($pairs as [$nameField, $valueField]) {
+        $assignments = [];
+
+        foreach ($pairs as $index => [$nameField, $valueField]) {
             $name = trim((string)($row[$nameField] ?? ''));
             $value = trim((string)($row[$valueField] ?? ''));
             if ($name === '' || $value === '') {
@@ -38,8 +49,20 @@ final class AttributesBuilder
             }
 
             $parentId = $this->ensureParent($name);
-            $this->ensureChild($parentId, $value);
+            $attributeId = $this->ensureChild($parentId, $value);
+            if ($attributeId <= 0) {
+                continue;
+            }
+            $assignments[] = [
+                'position' => $index + 1,
+                'parent_id' => $parentId,
+                'attribute_id' => $attributeId,
+                'name' => $name,
+                'value' => $value,
+            ];
         }
+
+        return $assignments;
     }
 
     private function ensureParent(string $name): int
@@ -62,12 +85,12 @@ final class AttributesBuilder
         return $id;
     }
 
-    private function ensureChild(int $parentId, string $value): void
+    private function ensureChild(int $parentId, string $value): int
     {
         $this->loadExisting();
         $key = $parentId . '|' . strtolower($value);
         if (isset($this->childMap[$key])) {
-            return;
+            return $this->childMap[$key];
         }
 
         $stmt = $this->pdo->prepare(
@@ -79,6 +102,7 @@ final class AttributesBuilder
         $id = $this->fetchAttributeId($parentId, $value);
         $this->childMap[$key] = $id;
         $this->childrenCreated++;
+        return $id;
     }
 
     private function fetchAttributeId(int $parentId, string $model): int

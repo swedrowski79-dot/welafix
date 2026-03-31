@@ -46,6 +46,8 @@ final class ArtikelSyncService
         $mssqlRepo = new ArtikelRepositoryMssql($mssql);
         $sqliteRepo = new ArtikelRepositorySqlite($pdo);
         $sqliteRepo->ensureTable();
+        $relationWriter = new ArtikelRelationWriter($pdo);
+        $relationWriter->ensureSchema();
 
         $batchSize = max(1, min(10000, $batchSize));
         $seenAt = (new DateTimeImmutable('now', new DateTimeZone('UTC')))->format(DATE_ATOM);
@@ -100,6 +102,8 @@ final class ArtikelSyncService
             $masterCount = 0;
             $slaveCount = 0;
             $normalCount = 0;
+            $attributeAssignmentsWritten = 0;
+            $mediaAssignmentsWritten = 0;
 
             foreach ($rows as $row) {
                 $row = array_intersect_key($row, $allowedLookup);
@@ -186,7 +190,11 @@ final class ArtikelSyncService
                         $batchStats['masters'] = $masterCount;
                         $batchStats['slaves'] = $slaveCount;
                         $batchStats['normal'] = $normalCount;
-                        $attributesBuilder->ingestRow($row);
+                        $attributeAssignments = $attributesBuilder->ingestRowWithAssignments($row);
+                        $attributeAssignmentsWritten += $relationWriter->syncAttributeAssignments($afsArtikelId, $attributeAssignments);
+
+                        $mediaAssignments = $this->buildMediaAssignments($row, $seenAt, $relationWriter);
+                        $mediaAssignmentsWritten += $relationWriter->syncMediaAssignments($afsArtikelId, $mediaAssignments);
 
                     } catch (\Throwable $e) {
                         $batchStats['errors_count']++;
@@ -203,6 +211,8 @@ final class ArtikelSyncService
                 $pdo->commit();
                 $batchStats['attributes_parents_created'] = $attributesBuilder->parentsCreated;
                 $batchStats['attributes_children_created'] = $attributesBuilder->childrenCreated;
+                $batchStats['attribute_assignments_written'] = $attributeAssignmentsWritten;
+                $batchStats['media_assignments_written'] = $mediaAssignmentsWritten;
             } catch (\Throwable $e) {
                 $pdo->rollBack();
                 throw $e;
@@ -443,7 +453,28 @@ final class ArtikelSyncService
                AND (is_deleted IS NULL OR is_deleted = 0)'
         );
         $stmt->execute([':started_at' => $startedAt]);
+        $this->cleanupDeletedArticleRelations($pdo);
         return $stmt->rowCount();
+    }
+
+    private function cleanupDeletedArticleRelations(\PDO $pdo): void
+    {
+        $pdo->exec(
+            'DELETE FROM artikel_attribute_map
+             WHERE afs_artikel_id IN (
+                 SELECT afs_artikel_id
+                 FROM artikel
+                 WHERE is_deleted = 1
+             )'
+        );
+        $pdo->exec(
+            'DELETE FROM artikel_media_map
+             WHERE afs_artikel_id IN (
+                 SELECT afs_artikel_id
+                 FROM artikel
+                 WHERE is_deleted = 1
+             )'
+        );
     }
 
     private function loadArtikelMapping(): array
@@ -519,6 +550,31 @@ final class ArtikelSyncService
             $raw[$field] = $row[$field] ?? null;
         }
         return $raw;
+    }
+
+    /**
+     * @param array<string, mixed> $row
+     * @return array<int, array{filename:string,position:int,is_main:int,source_field:string,media_id:?int}>
+     */
+    private function buildMediaAssignments(array $row, string $seenAt, ArtikelRelationWriter $relationWriter): array
+    {
+        $items = [];
+        for ($i = 1; $i <= 10; $i++) {
+            $field = 'Bild' . $i;
+            $filename = normalizeMediaFilename(isset($row[$field]) ? (string)$row[$field] : null);
+            if ($filename === null) {
+                continue;
+            }
+            $mediaId = $relationWriter->ensureMedia($filename, 'article', $seenAt);
+            $items[] = [
+                'filename' => $filename,
+                'position' => $i,
+                'is_main' => $i === 1 ? 1 : 0,
+                'source_field' => $field,
+                'media_id' => $mediaId,
+            ];
+        }
+        return $items;
     }
 
     /**

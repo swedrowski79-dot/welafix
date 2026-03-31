@@ -125,6 +125,8 @@ final class ConnectionFactory
         ]);
         $this->ensureDocumentsExtra($pdo);
         $this->ensureAttributesSchema($pdo);
+        $this->ensureArtikelAttributeMapTable($pdo);
+        $this->ensureArtikelMediaMapTable($pdo);
         $this->ensureSettingsTable($pdo);
         $this->ensureArtikelExtraDataTable($pdo);
         $this->ensureWarengruppeExtraDataTable($pdo);
@@ -244,6 +246,46 @@ final class ConnectionFactory
                 key TEXT PRIMARY KEY,
                 value TEXT
             )'
+        );
+    }
+
+    private function ensureArtikelAttributeMapTable(PDO $pdo): void
+    {
+        $pdo->exec(
+            'CREATE TABLE IF NOT EXISTS artikel_attribute_map (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                afs_artikel_id TEXT NOT NULL,
+                attributes_parent_id INTEGER NOT NULL,
+                attributes_id INTEGER NOT NULL,
+                position INTEGER NOT NULL DEFAULT 0,
+                attribute_name TEXT NULL,
+                attribute_value TEXT NULL,
+                UNIQUE(afs_artikel_id, attributes_parent_id, attributes_id)
+            )'
+        );
+        $pdo->exec(
+            'CREATE INDEX IF NOT EXISTS idx_artikel_attribute_map_artikel
+             ON artikel_attribute_map(afs_artikel_id)'
+        );
+    }
+
+    private function ensureArtikelMediaMapTable(PDO $pdo): void
+    {
+        $pdo->exec(
+            'CREATE TABLE IF NOT EXISTS artikel_media_map (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                afs_artikel_id TEXT NOT NULL,
+                media_id INTEGER NULL,
+                filename TEXT NOT NULL,
+                position INTEGER NOT NULL DEFAULT 0,
+                is_main INTEGER NOT NULL DEFAULT 0,
+                source_field TEXT NULL,
+                UNIQUE(afs_artikel_id, position, filename)
+            )'
+        );
+        $pdo->exec(
+            'CREATE INDEX IF NOT EXISTS idx_artikel_media_map_artikel
+             ON artikel_media_map(afs_artikel_id)'
         );
     }
 

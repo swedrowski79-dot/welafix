@@ -167,6 +167,40 @@ return [
       ],
     ],
 
+    // =========================
+    // XT: Produktattribute
+    // =========================
+    'xt_plg_products_attributes' => [
+      'table' => 'xt_plg_products_attributes',
+      'base' => 'attributes',
+      'primary_key' => 'attributes_id',
+      'mode' => 'upsert',
+      'columns' => [
+        'attributes_id'           => 'attributes.attributes_id',
+        'attributes_parent'       => 'attributes.attributes_parent',
+        'attributes_model'        => 'attributes.attributes_model',
+        'attributes_image'        => 'attributes.attributes_image',
+        'attributes_color'        => 'attributes.attributes_color',
+        'sort_order'              => 'attributes.sort_order',
+        'status'                  => 'attributes.status',
+        'attributes_templates_id' => 'attributes.attributes_templates_id',
+        'bw_id'                   => 'attributes.bw_id',
+      ],
+    ],
+
+    'xt_plg_products_attributes_description' => [
+      'table' => 'xt_plg_products_attributes_description',
+      'base' => 'attributes',
+      'primary_key' => ['attributes_id', 'language_code'],
+      'mode' => 'upsert',
+      'columns' => [
+        'attributes_id'   => 'attributes.attributes_id',
+        'language_code'   => 'default:de',
+        'attributes_name' => 'attributes.attributes_model',
+        'attributes_desc' => 'default:""',
+      ],
+    ],
+
    /* 'xt_media_to_media_gallery' => [
       'table' => 'xt_media_to_media_gallery',
       'primary_key' => 'ml_id',

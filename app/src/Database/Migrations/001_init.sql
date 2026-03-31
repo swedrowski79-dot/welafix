@@ -68,6 +68,32 @@ CREATE TABLE IF NOT EXISTS settings (
   value TEXT
 );
 
+CREATE TABLE IF NOT EXISTS artikel_attribute_map (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  afs_artikel_id TEXT NOT NULL,
+  attributes_parent_id INTEGER NOT NULL,
+  attributes_id INTEGER NOT NULL,
+  position INTEGER NOT NULL DEFAULT 0,
+  attribute_name TEXT NULL,
+  attribute_value TEXT NULL,
+  UNIQUE(afs_artikel_id, attributes_parent_id, attributes_id)
+);
+CREATE INDEX IF NOT EXISTS idx_artikel_attribute_map_artikel
+ON artikel_attribute_map(afs_artikel_id);
+
+CREATE TABLE IF NOT EXISTS artikel_media_map (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  afs_artikel_id TEXT NOT NULL,
+  media_id INTEGER NULL,
+  filename TEXT NOT NULL,
+  position INTEGER NOT NULL DEFAULT 0,
+  is_main INTEGER NOT NULL DEFAULT 0,
+  source_field TEXT NULL,
+  UNIQUE(afs_artikel_id, position, filename)
+);
+CREATE INDEX IF NOT EXISTS idx_artikel_media_map_artikel
+ON artikel_media_map(afs_artikel_id);
+
 CREATE TABLE IF NOT EXISTS artikel_extra_data (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   Artikelnummer TEXT NOT NULL UNIQUE,

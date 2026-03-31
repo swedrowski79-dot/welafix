@@ -78,6 +78,16 @@ return [
       'target' => ['table' => 'xt_media_gallery'],
     ],
     [
+      'id' => 'pull_xt_plg_products_attributes_description',
+      'source' => ['table' => 'xt_plg_products_attributes_description'],
+      'target' => ['table' => 'xt_plg_products_attributes_description'],
+    ],
+    [
+      'id' => 'pull_xt_plg_products_attributes',
+      'source' => ['table' => 'xt_plg_products_attributes'],
+      'target' => ['table' => 'xt_plg_products_attributes'],
+    ],
+    [
       'id' => 'pull_xt_media_link',
       'source' => ['table' => 'xt_media_link'],
       'target' => ['table' => 'xt_media_link'],
