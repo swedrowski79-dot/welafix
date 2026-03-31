@@ -11,6 +11,11 @@ use Welafix\Database\Db;
 final class XtImportService
 {
     /**
+     * Legacy archivierter Service.
+     *
+     * Dieser Pfad ist absichtlich nicht mehr aktiv verdrahtet.
+     * Siehe legacy/xt-import-path/README.md
+     *
      * @return array<string, mixed>
      */
     public function import(string $mappingName, int $pageSize = 500): array

@@ -21,9 +21,10 @@ final class DokumentRepositoryMssql
      * @param array<string, mixed> $mapping
      * @return array<int, array<string, mixed>>
      */
-    public function fetchAllByMapping(array $mapping): array
+    public function fetchAllByMapping(array $mapping, bool $deltaOnly = false): array
     {
         $source = $mapping['source'] ?? null;
+        $hints = $mapping['hints'] ?? null;
         if (!is_array($source)) {
             throw new RuntimeException('Mapping: Feld "source" fehlt.');
         }
@@ -46,6 +47,10 @@ final class DokumentRepositoryMssql
         $select = array_values(array_filter($select, static fn($value): bool => is_string($value) && $value !== ''));
         $columns = $mappingService->buildMssqlSelectList($select, 'd');
         $tableEscaped = $this->escapeIdentifier($table);
+        $updateColumn = is_array($hints) ? (string)($hints['on_update_column'] ?? '') : '';
+        if ($deltaOnly && $updateColumn !== '') {
+            $where = '(' . $where . ') AND (ISNULL(d.' . $mappingService->escapeMssqlIdentifier($updateColumn) . ', 0) <> 0)';
+        }
         $sql = "SELECT {$columns} FROM {$tableEscaped} d WHERE {$where}";
         $this->lastSql = $sql;
 

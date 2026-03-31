@@ -21,7 +21,7 @@ final class ArtikelRepositoryMssql
     /**
      * @return array<int, array<string, mixed>>
      */
-    public function fetchAfterByMapping(array $mapping, string $afterKey, int $limit = 500): array
+    public function fetchAfterByMapping(array $mapping, string $afterKey, int $limit = 500, bool $deltaOnly = false): array
     {
         $limit = max(1, min(10000, $limit));
         $driver = $this->pdo->getAttribute(PDO::ATTR_DRIVER_NAME);
@@ -30,6 +30,7 @@ final class ArtikelRepositoryMssql
         }
 
         $source = $mapping['source'] ?? [];
+        $hints = $mapping['hints'] ?? [];
         $table = $source['table'] ?? 'dbo.Artikel';
         $where = $source['where'] ?? '';
         $key = $source['key'] ?? 'Artikel';
@@ -43,6 +44,10 @@ final class ArtikelRepositoryMssql
         $whereParts = [];
         if (trim($where) !== '') {
             $whereParts[] = '(' . $where . ')';
+        }
+        $updateColumn = is_array($hints) ? (string)($hints['on_update_column'] ?? '') : '';
+        if ($deltaOnly && $updateColumn !== '') {
+            $whereParts[] = '(ISNULL(a.' . $mappingService->escapeMssqlIdentifier($updateColumn) . ', 0) <> 0)';
         }
         $whereParts[] = '(? = \'\' OR a.' . $mappingService->escapeMssqlIdentifier($key) . ' > ?)';
         $whereSql = implode(' AND ', $whereParts);

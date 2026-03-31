@@ -18,7 +18,6 @@ final class MediaFilenameImporter
      */
     public function importFromAfs(): array
     {
-        $mssql = Db::guardMssql(Db::mssql(), __METHOD__);
         $sqlite = Db::guardSqlite(Db::sqlite(), __METHOD__);
 
         $now = (new DateTimeImmutable('now', new DateTimeZone('UTC')))->format(DATE_ATOM);
@@ -35,8 +34,8 @@ final class MediaFilenameImporter
         for ($i = 1; $i <= 10; $i++) {
             $articleFields[] = 'Bild' . $i;
         }
-        $articleSql = 'SELECT ' . implode(', ', $articleFields) . ' FROM dbo.Artikel';
-        $stmt = $mssql->query($articleSql);
+        $articleSql = 'SELECT ' . implode(', ', array_map([$this, 'quoteIdentifier'], $articleFields)) . ' FROM artikel WHERE changed = 1 AND COALESCE(is_deleted, 0) = 0';
+        $stmt = $sqlite->query($articleSql);
         while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
             foreach ($articleFields as $field) {
                 $stats['found']++;
@@ -50,8 +49,8 @@ final class MediaFilenameImporter
         }
 
         $wgFields = ['Bild', 'Bild_gross'];
-        $wgSql = 'SELECT ' . implode(', ', $wgFields) . ' FROM dbo.Warengruppe';
-        $stmt = $mssql->query($wgSql);
+        $wgSql = 'SELECT ' . implode(', ', array_map([$this, 'quoteIdentifier'], $wgFields)) . ' FROM warengruppe WHERE changed = 1 AND COALESCE(is_deleted, 0) = 0';
+        $stmt = $sqlite->query($wgSql);
         while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
             foreach ($wgFields as $field) {
                 $stats['found']++;
@@ -69,8 +68,8 @@ final class MediaFilenameImporter
         $stats['unique'] = count($map);
 
         $insert = $sqlite->prepare(
-            'INSERT OR IGNORE INTO media (filename, source, created_at)
-             VALUES (:filename, :source, :created_at)'
+            'INSERT OR IGNORE INTO media (filename, source, created_at, changed)
+             VALUES (:filename, :source, :created_at, 1)'
         );
 
         $sqlite->beginTransaction();
@@ -123,7 +122,9 @@ final class MediaFilenameImporter
         $stats['table'] = $table;
         $stats['column'] = $column;
 
-        $stmt = $sqlite->query('SELECT ' . $this->quoteIdentifier($column) . ' FROM ' . $this->quoteIdentifier($table));
+        $stmt = $sqlite->query(
+            'SELECT ' . $this->quoteIdentifier($column) . ' FROM ' . $this->quoteIdentifier($table) . ' WHERE changed = 1 AND COALESCE(is_deleted, 0) = 0'
+        );
         $map = [];
         if ($stmt) {
             while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
@@ -140,8 +141,8 @@ final class MediaFilenameImporter
         $stats['unique'] = count($map);
 
         $insert = $sqlite->prepare(
-            'INSERT OR IGNORE INTO media (filename, source, type, created_at)
-             VALUES (:filename, :source, :type, :created_at)'
+            'INSERT OR IGNORE INTO media (filename, source, type, created_at, changed)
+             VALUES (:filename, :source, :type, :created_at, 1)'
         );
 
         $sqlite->beginTransaction();

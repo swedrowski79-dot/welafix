@@ -9,6 +9,7 @@ use XtApi\Controller\HealthController;
 use XtApi\Controller\ExportController;
 use XtApi\Controller\SchemaController;
 use XtApi\Controller\ExportTableController;
+use XtApi\Controller\ApplyController;
 
 $router = new Router();
 $auth = new ApiAuth();
@@ -16,6 +17,7 @@ $health = new HealthController();
 $export = new ExportController();
 $schema = new SchemaController();
 $exportTable = new ExportTableController();
+$apply = new ApplyController();
 
 $router->get('/health', function () use ($auth, $health) {
     $auth->requireAuth();
@@ -48,6 +50,11 @@ $router->getPattern('#^/export/table/([A-Za-z0-9_]+)$#', function (array $matche
     $page = isset($_GET['page']) ? (int)$_GET['page'] : 1;
     $pageSize = isset($_GET['page_size']) ? (int)$_GET['page_size'] : 500;
     $exportTable->export($table, $page, $pageSize);
+});
+
+$router->post('/apply', function () use ($auth, $apply) {
+    $auth->requireAuth();
+    $apply->applyFromBody();
 });
 
 $router->dispatch();

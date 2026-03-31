@@ -74,8 +74,8 @@ final class AttributesBuilder
         }
 
         $stmt = $this->pdo->prepare(
-            'INSERT OR IGNORE INTO attributes (attributes_parent, attributes_model)
-             VALUES (0, :model)'
+            'INSERT OR IGNORE INTO attributes (attributes_parent, attributes_model, changed)
+             VALUES (0, :model, 1)'
         );
         $stmt->execute([':model' => $name]);
 
@@ -94,8 +94,8 @@ final class AttributesBuilder
         }
 
         $stmt = $this->pdo->prepare(
-            'INSERT OR IGNORE INTO attributes (attributes_parent, attributes_model)
-             VALUES (:parent, :model)'
+            'INSERT OR IGNORE INTO attributes (attributes_parent, attributes_model, changed)
+             VALUES (:parent, :model, 1)'
         );
         $stmt->execute([':parent' => $parentId, ':model' => $value]);
 

@@ -20,6 +20,7 @@ final class ArtikelRelationWriter
                 position INTEGER NOT NULL DEFAULT 0,
                 attribute_name TEXT NULL,
                 attribute_value TEXT NULL,
+                changed INTEGER NOT NULL DEFAULT 0,
                 UNIQUE(afs_artikel_id, attributes_parent_id, attributes_id)
             )'
         );
@@ -37,6 +38,7 @@ final class ArtikelRelationWriter
                 position INTEGER NOT NULL DEFAULT 0,
                 is_main INTEGER NOT NULL DEFAULT 0,
                 source_field TEXT NULL,
+                changed INTEGER NOT NULL DEFAULT 0,
                 UNIQUE(afs_artikel_id, position, filename)
             )'
         );
@@ -51,23 +53,51 @@ final class ArtikelRelationWriter
      */
     public function syncAttributeAssignments(string $afsArtikelId, array $assignments): int
     {
-        $delete = $this->pdo->prepare('DELETE FROM artikel_attribute_map WHERE afs_artikel_id = :afs_artikel_id');
-        $delete->execute([':afs_artikel_id' => $afsArtikelId]);
-
-        if ($assignments === []) {
-            return 0;
+        $existing = $this->loadExistingAttributeAssignments($afsArtikelId);
+        $incoming = [];
+        foreach ($assignments as $assignment) {
+            $key = $assignment['parent_id'] . '|' . $assignment['attribute_id'];
+            $incoming[$key] = $assignment;
         }
 
-        $insert = $this->pdo->prepare(
+        $changed = 0;
+        $delete = $this->pdo->prepare(
+            'DELETE FROM artikel_attribute_map
+             WHERE afs_artikel_id = :afs_artikel_id
+               AND attributes_parent_id = :attributes_parent_id
+               AND attributes_id = :attributes_id'
+        );
+        foreach ($existing as $key => $row) {
+            if (isset($incoming[$key])) {
+                continue;
+            }
+            $delete->execute([
+                ':afs_artikel_id' => $afsArtikelId,
+                ':attributes_parent_id' => $row['attributes_parent_id'],
+                ':attributes_id' => $row['attributes_id'],
+            ]);
+            $changed++;
+        }
+
+        $upsert = $this->pdo->prepare(
             'INSERT INTO artikel_attribute_map
-                (afs_artikel_id, attributes_parent_id, attributes_id, position, attribute_name, attribute_value)
+                (afs_artikel_id, attributes_parent_id, attributes_id, position, attribute_name, attribute_value, changed)
              VALUES
-                (:afs_artikel_id, :attributes_parent_id, :attributes_id, :position, :attribute_name, :attribute_value)'
+                (:afs_artikel_id, :attributes_parent_id, :attributes_id, :position, :attribute_name, :attribute_value, 1)
+             ON CONFLICT(afs_artikel_id, attributes_parent_id, attributes_id) DO UPDATE SET
+                position = excluded.position,
+                attribute_name = excluded.attribute_name,
+                attribute_value = excluded.attribute_value,
+                changed = CASE
+                    WHEN artikel_attribute_map.position != excluded.position
+                      OR COALESCE(artikel_attribute_map.attribute_name, \'\') != COALESCE(excluded.attribute_name, \'\')
+                      OR COALESCE(artikel_attribute_map.attribute_value, \'\') != COALESCE(excluded.attribute_value, \'\')
+                    THEN 1 ELSE artikel_attribute_map.changed END'
         );
 
-        $count = 0;
-        foreach ($assignments as $assignment) {
-            $insert->execute([
+        foreach ($incoming as $key => $assignment) {
+            $before = $existing[$key] ?? null;
+            $upsert->execute([
                 ':afs_artikel_id' => $afsArtikelId,
                 ':attributes_parent_id' => $assignment['parent_id'],
                 ':attributes_id' => $assignment['attribute_id'],
@@ -75,10 +105,20 @@ final class ArtikelRelationWriter
                 ':attribute_name' => $assignment['name'],
                 ':attribute_value' => $assignment['value'],
             ]);
-            $count++;
+            if ($before === null
+                || (int)$before['position'] !== (int)$assignment['position']
+                || (string)$before['attribute_name'] !== (string)$assignment['name']
+                || (string)$before['attribute_value'] !== (string)$assignment['value']) {
+                $changed++;
+            }
         }
 
-        return $count;
+        if ($changed > 0) {
+            $stmt = $this->pdo->prepare('UPDATE artikel_attribute_map SET changed = 1 WHERE afs_artikel_id = :afs_artikel_id');
+            $stmt->execute([':afs_artikel_id' => $afsArtikelId]);
+        }
+
+        return $changed;
     }
 
     /**
@@ -86,44 +126,82 @@ final class ArtikelRelationWriter
      */
     public function syncMediaAssignments(string $afsArtikelId, array $items): int
     {
-        $delete = $this->pdo->prepare('DELETE FROM artikel_media_map WHERE afs_artikel_id = :afs_artikel_id');
-        $delete->execute([':afs_artikel_id' => $afsArtikelId]);
-
-        if ($items === []) {
-            return 0;
+        $existing = $this->loadExistingMediaAssignments($afsArtikelId);
+        $incoming = [];
+        foreach ($items as $item) {
+            $key = $item['position'] . '|' . strtolower($item['filename']);
+            $incoming[$key] = $item;
         }
 
-        $insert = $this->pdo->prepare(
+        $changed = 0;
+        $delete = $this->pdo->prepare(
+            'DELETE FROM artikel_media_map
+             WHERE afs_artikel_id = :afs_artikel_id
+               AND position = :position
+               AND lower(filename) = lower(:filename)'
+        );
+        foreach ($existing as $key => $row) {
+            if (isset($incoming[$key])) {
+                continue;
+            }
+            $delete->execute([
+                ':afs_artikel_id' => $afsArtikelId,
+                ':position' => $row['position'],
+                ':filename' => $row['filename'],
+            ]);
+            $changed++;
+        }
+
+        $upsert = $this->pdo->prepare(
             'INSERT INTO artikel_media_map
-                (afs_artikel_id, media_id, filename, position, is_main, source_field)
+                (afs_artikel_id, media_id, filename, position, is_main, source_field, changed)
              VALUES
-                (:afs_artikel_id, :media_id, :filename, :position, :is_main, :source_field)'
+                (:afs_artikel_id, :media_id, :filename, :position, :is_main, :source_field, 1)
+             ON CONFLICT(afs_artikel_id, position, filename) DO UPDATE SET
+                media_id = excluded.media_id,
+                is_main = excluded.is_main,
+                source_field = excluded.source_field,
+                changed = CASE
+                    WHEN COALESCE(artikel_media_map.media_id, 0) != COALESCE(excluded.media_id, 0)
+                      OR artikel_media_map.is_main != excluded.is_main
+                      OR COALESCE(artikel_media_map.source_field, \'\') != COALESCE(excluded.source_field, \'\')
+                    THEN 1 ELSE artikel_media_map.changed END'
         );
 
-        $count = 0;
-        foreach ($items as $item) {
-            $insert->bindValue(':afs_artikel_id', $afsArtikelId, PDO::PARAM_STR);
+        foreach ($incoming as $key => $item) {
+            $before = $existing[$key] ?? null;
+            $upsert->bindValue(':afs_artikel_id', $afsArtikelId, PDO::PARAM_STR);
             if ($item['media_id'] === null) {
-                $insert->bindValue(':media_id', null, PDO::PARAM_NULL);
+                $upsert->bindValue(':media_id', null, PDO::PARAM_NULL);
             } else {
-                $insert->bindValue(':media_id', $item['media_id'], PDO::PARAM_INT);
+                $upsert->bindValue(':media_id', $item['media_id'], PDO::PARAM_INT);
             }
-            $insert->bindValue(':filename', $item['filename'], PDO::PARAM_STR);
-            $insert->bindValue(':position', $item['position'], PDO::PARAM_INT);
-            $insert->bindValue(':is_main', $item['is_main'], PDO::PARAM_INT);
-            $insert->bindValue(':source_field', $item['source_field'], PDO::PARAM_STR);
-            $insert->execute();
-            $count++;
+            $upsert->bindValue(':filename', $item['filename'], PDO::PARAM_STR);
+            $upsert->bindValue(':position', $item['position'], PDO::PARAM_INT);
+            $upsert->bindValue(':is_main', $item['is_main'], PDO::PARAM_INT);
+            $upsert->bindValue(':source_field', $item['source_field'], PDO::PARAM_STR);
+            $upsert->execute();
+            if ($before === null
+                || (int)($before['media_id'] ?? 0) !== (int)($item['media_id'] ?? 0)
+                || (int)$before['is_main'] !== (int)$item['is_main']
+                || (string)$before['source_field'] !== (string)$item['source_field']) {
+                $changed++;
+            }
         }
 
-        return $count;
+        if ($changed > 0) {
+            $stmt = $this->pdo->prepare('UPDATE artikel_media_map SET changed = 1 WHERE afs_artikel_id = :afs_artikel_id');
+            $stmt->execute([':afs_artikel_id' => $afsArtikelId]);
+        }
+
+        return $changed;
     }
 
     public function ensureMedia(string $filename, string $source, string $createdAt): ?int
     {
         $insert = $this->pdo->prepare(
-            'INSERT OR IGNORE INTO media (filename, source, created_at)
-             VALUES (:filename, :source, :created_at)'
+            'INSERT OR IGNORE INTO media (filename, source, created_at, changed)
+             VALUES (:filename, :source, :created_at, 1)'
         );
         $insert->execute([
             ':filename' => $filename,
@@ -138,5 +216,45 @@ final class ArtikelRelationWriter
             return null;
         }
         return (int)$id;
+    }
+
+    /**
+     * @return array<string, array<string, mixed>>
+     */
+    private function loadExistingAttributeAssignments(string $afsArtikelId): array
+    {
+        $stmt = $this->pdo->prepare(
+            'SELECT attributes_parent_id, attributes_id, position, attribute_name, attribute_value
+             FROM artikel_attribute_map
+             WHERE afs_artikel_id = :afs_artikel_id'
+        );
+        $stmt->execute([':afs_artikel_id' => $afsArtikelId]);
+        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+        $map = [];
+        foreach ($rows as $row) {
+            $key = (int)$row['attributes_parent_id'] . '|' . (int)$row['attributes_id'];
+            $map[$key] = $row;
+        }
+        return $map;
+    }
+
+    /**
+     * @return array<string, array<string, mixed>>
+     */
+    private function loadExistingMediaAssignments(string $afsArtikelId): array
+    {
+        $stmt = $this->pdo->prepare(
+            'SELECT media_id, filename, position, is_main, source_field
+             FROM artikel_media_map
+             WHERE afs_artikel_id = :afs_artikel_id'
+        );
+        $stmt->execute([':afs_artikel_id' => $afsArtikelId]);
+        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+        $map = [];
+        foreach ($rows as $row) {
+            $key = (int)$row['position'] . '|' . strtolower((string)$row['filename']);
+            $map[$key] = $row;
+        }
+        return $map;
     }
 }

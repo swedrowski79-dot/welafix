@@ -13,6 +13,7 @@ use Welafix\Database\ConnectionFactory;
 
 final class MediaStorageChecker
 {
+    private const MAX_LOG_LINES = 200;
     private const IMAGE_EXTS = [
         'jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp', 'tif', 'tiff',
     ];
@@ -31,6 +32,8 @@ final class MediaStorageChecker
         $pdo = $this->factory->sqlite();
         $imageBase = $this->imageStorageBase();
         $docBase = $this->documentStorageBase();
+        $imageStorageAvailable = is_dir($imageBase);
+        $docStorageAvailable = is_dir($docBase);
         $now = (new DateTimeImmutable('now', new DateTimeZone('UTC')))->format(DATE_ATOM);
 
         $log = [];
@@ -93,16 +96,22 @@ final class MediaStorageChecker
                 $stats['found']++;
             } else {
                 $stats['notFound']++;
-                $usage = $this->formatUsage($usageList);
-                $line = ($type === 'dokument' ? 'document file ' : 'file ') . $filename . ' nicht gefunden' . $usage;
-                $this->emitLog($line, $log);
+                $storageAvailable = $type === 'dokument' ? $docStorageAvailable : $imageStorageAvailable;
+                if ($storageAvailable) {
+                    $usage = $this->formatUsage($usageList);
+                    $line = ($type === 'dokument' ? 'document file ' : 'file ') . $filename . ' nicht gefunden' . $usage;
+                    $this->emitLog($line, $log);
+                }
             }
 
             $hasChanged = $newChecksum !== $oldChecksum;
             if ($hasChanged) {
                 $stats['changed']++;
-                $line = ($type === 'dokument' ? 'document file ' : 'file ') . $filename . ' geändert';
-                $this->emitLog($line, $log);
+                $storageAvailable = $type === 'dokument' ? $docStorageAvailable : $imageStorageAvailable;
+                if ($storageAvailable || $oldChecksum !== '' && $oldChecksum !== 'notFound') {
+                    $line = ($type === 'dokument' ? 'document file ' : 'file ') . $filename . ' geändert';
+                    $this->emitLog($line, $log);
+                }
             }
 
             $stmt = $hasChanged ? $updateChanged : $update;
@@ -274,6 +283,18 @@ final class MediaStorageChecker
 
     private function emitLog(string $line, array &$log): void
     {
+        if (count($log) >= self::MAX_LOG_LINES) {
+            if (count($log) === self::MAX_LOG_LINES) {
+                $notice = 'weitere media-storage-logzeilen unterdrückt';
+                if (PHP_SAPI === 'cli') {
+                    echo $notice . "\n";
+                } else {
+                    error_log($notice);
+                }
+                $log[] = $notice;
+            }
+            return;
+        }
         if (PHP_SAPI === 'cli') {
             echo $line . "\n";
         } else {

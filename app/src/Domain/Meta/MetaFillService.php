@@ -17,11 +17,11 @@ final class MetaFillService
     {
         $pdo = $this->factory->sqlite();
 
-        $artikelRows = $pdo->query('SELECT * FROM artikel')?->fetchAll(PDO::FETCH_ASSOC) ?: [];
+        $artikelRows = $pdo->query('SELECT * FROM artikel WHERE changed = 1 AND COALESCE(is_deleted,0) = 0')?->fetchAll(PDO::FETCH_ASSOC) ?: [];
         $artikelExtraRows = $pdo->query('SELECT * FROM artikel_extra_data')?->fetchAll(PDO::FETCH_ASSOC) ?: [];
         $artikelExtraMap = $this->indexExtraRows($artikelExtraRows, 'Artikelnummer');
 
-        $warengruppeRows = $pdo->query('SELECT * FROM warengruppe')?->fetchAll(PDO::FETCH_ASSOC) ?: [];
+        $warengruppeRows = $pdo->query('SELECT * FROM warengruppe WHERE changed = 1 AND COALESCE(is_deleted,0) = 0')?->fetchAll(PDO::FETCH_ASSOC) ?: [];
         $warengruppeExtraRows = $pdo->query('SELECT * FROM warengruppe_extra_data')?->fetchAll(PDO::FETCH_ASSOC) ?: [];
         $warengruppeExtraMap = $this->indexExtraRows($warengruppeExtraRows, 'warengruppenname');
 
@@ -109,6 +109,8 @@ final class MetaFillService
                 $stats['artikel']['written']++;
                 if ($isUpdated) {
                     $stats['artikel']['updated']++;
+                    $pdo->prepare('UPDATE artikel SET changed = 1 WHERE afs_artikel_id = :id')
+                        ->execute([':id' => $afsArtikelId]);
                 } else {
                     $stats['artikel']['unchanged']++;
                 }
@@ -151,13 +153,12 @@ final class MetaFillService
                 $stats['warengruppen']['written']++;
                 if ($isUpdated) {
                     $stats['warengruppen']['updated']++;
+                    $pdo->prepare('UPDATE warengruppe SET changed = 1 WHERE afs_wg_id = :id')
+                        ->execute([':id' => $afsWgId]);
                 } else {
                     $stats['warengruppen']['unchanged']++;
                 }
             }
-
-            $this->deleteMissingMetaArtikel($pdo, array_keys($seenArtikelIds));
-            $this->deleteMissingMetaWarengruppen($pdo, array_keys($seenWarengruppeIds));
 
             $pdo->commit();
         } catch (\Throwable $e) {

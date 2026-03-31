@@ -47,8 +47,8 @@ final class WarengruppeRepositorySqlite
         $diff = $this->tracker->buildDiff($existing, $extraFields, $diffColumns);
 
         if ($existing === null) {
-            $columns = ['afs_wg_id', 'name', 'parent_id'];
-            $params = [':id', ':name', ':parent_id'];
+            $columns = ['afs_wg_id', 'name', 'parent_id', 'is_deleted'];
+            $params = [':id', ':name', ':parent_id', ':is_deleted'];
             foreach ($extraKeys as $key) {
                 $columns[] = $this->quoteIdentifier($key);
                 $params[] = ':' . $key;
@@ -70,6 +70,7 @@ final class WarengruppeRepositorySqlite
             );
             $stmt->bindValue(':id', $afsWgId, PDO::PARAM_INT);
             $stmt->bindValue(':name', $name, PDO::PARAM_STR);
+            $stmt->bindValue(':is_deleted', 0, PDO::PARAM_INT);
             if ($parentIdNormalized === null) {
                 $stmt->bindValue(':parent_id', null, PDO::PARAM_NULL);
             } else {
@@ -109,6 +110,7 @@ final class WarengruppeRepositorySqlite
         $setParts = [
             'name = :name',
             'parent_id = :parent_id',
+            'is_deleted = :is_deleted',
         ];
         foreach ($extraKeys as $key) {
             $setParts[] = $this->quoteIdentifier($key) . ' = :' . $key;
@@ -128,6 +130,7 @@ final class WarengruppeRepositorySqlite
         );
         $stmt->bindValue(':id', $afsWgId, PDO::PARAM_INT);
         $stmt->bindValue(':name', $name, PDO::PARAM_STR);
+        $stmt->bindValue(':is_deleted', 0, PDO::PARAM_INT);
         if ($parentIdNormalized === null) {
             $stmt->bindValue(':parent_id', null, PDO::PARAM_NULL);
         } else {
@@ -148,7 +151,7 @@ final class WarengruppeRepositorySqlite
         }
         $stmt->execute();
 
-        if ($reasons !== []) {
+        if ($reasons !== [] || (int)($existing['is_deleted'] ?? 0) === 1) {
             return ['inserted' => false, 'updated' => true, 'unchanged' => false, 'diff' => $diff];
         }
 

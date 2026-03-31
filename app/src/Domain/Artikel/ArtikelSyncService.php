@@ -10,6 +10,7 @@ use Welafix\Config\MappingService;
 use Welafix\Database\ConnectionFactory;
 use Welafix\Database\Db;
 use Welafix\Database\SchemaSyncService;
+use Welafix\Domain\Afs\AfsUpdateQueue;
 use Welafix\Domain\Attribute\AttributesBuilder;
 use Welafix\Infrastructure\Sqlite\SqliteSchemaHelper;
 
@@ -57,9 +58,11 @@ final class ArtikelSyncService
         $mapping['select'] = $selectFields;
         $this->schemaSync->ensureSqliteColumnsMatchMssql($mssql, $pdo, 'dbo.Artikel', 'artikel', $selectFields);
         $keyField = (string)(($mapping['source']['key'] ?? 'Artikel') ?: 'Artikel');
+        $deltaOnly = $this->shouldUseSourceUpdateFilter($mapping, $pdo, 'artikel');
+        $afsQueue = new AfsUpdateQueue($pdo);
 
         try {
-            $rows = $mssqlRepo->fetchAfterByMapping($mapping, $afterKey, $batchSize);
+            $rows = $mssqlRepo->fetchAfterByMapping($mapping, $afterKey, $batchSize, $deltaOnly);
             $this->lastSql = $mssqlRepo->getLastSql();
             $this->lastParams = $mssqlRepo->getLastParams();
         } catch (\Throwable $e) {
@@ -187,6 +190,7 @@ final class ArtikelSyncService
                         if ($result['inserted']) $batchStats['inserted']++;
                         if ($result['updated']) $batchStats['updated']++;
                         if ($result['unchanged']) $batchStats['unchanged']++;
+                        $afsQueue->add('artikel', $afsArtikelId);
                         $batchStats['masters'] = $masterCount;
                         $batchStats['slaves'] = $slaveCount;
                         $batchStats['normal'] = $normalCount;
@@ -219,8 +223,9 @@ final class ArtikelSyncService
             }
         }
 
-        $state = $this->updateState($pdo, $batchStats, $rows === []);
-        if ((bool)$state['done']) {
+        $isDone = $rows === [] || count($rows) < $batchSize;
+        $state = $this->updateState($pdo, $batchStats, $isDone);
+        if ((bool)$state['done'] && !$deltaOnly) {
             $deleted = $this->markDeletedMissing($pdo, (string)($state['started_at'] ?? ''));
             $batchStats['deleted_marked'] = $deleted;
         }
@@ -485,6 +490,17 @@ final class ArtikelSyncService
             throw new RuntimeException('Mapping "artikel" nicht gefunden.');
         }
         return $all['artikel'];
+    }
+
+    private function shouldUseSourceUpdateFilter(array $mapping, \PDO $pdo, string $table): bool
+    {
+        $hints = $mapping['hints'] ?? [];
+        $updateColumn = is_array($hints) ? (string)($hints['on_update_column'] ?? '') : '';
+        if ($updateColumn === '') {
+            return false;
+        }
+        $count = (int)$pdo->query('SELECT COUNT(*) FROM ' . $this->quoteIdentifier($table))->fetchColumn();
+        return $count > 0;
     }
 
     /**

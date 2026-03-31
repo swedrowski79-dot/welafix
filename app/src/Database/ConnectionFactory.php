@@ -104,6 +104,7 @@ final class ConnectionFactory
             'path' => 'TEXT',
             'path_ids' => 'TEXT',
             'seo_url' => 'TEXT',
+            'is_deleted' => 'INTEGER DEFAULT 0',
             'changed_fields' => 'TEXT',
             'last_synced_at' => 'TEXT',
             'last_seen_at' => 'TEXT',
@@ -132,6 +133,7 @@ final class ConnectionFactory
         $this->ensureWarengruppeExtraDataTable($pdo);
         $this->ensureMetaDataArtikelTable($pdo);
         $this->ensureMetaDataWarengruppenTable($pdo);
+        $this->ensureAfsUpdatePendingTable($pdo);
     }
 
     /**
@@ -191,10 +193,17 @@ final class ConnectionFactory
                 source TEXT NOT NULL,
                 source_id TEXT NOT NULL,
                 doc_type TEXT NOT NULL,
+                last_seen_at TEXT NULL,
+                is_deleted INTEGER DEFAULT 0,
                 changed INTEGER DEFAULT 0,
                 UNIQUE(source, source_id)
             )'
         );
+        $this->ensureColumns($pdo, 'documents', [
+            'last_seen_at' => 'TEXT NULL',
+            'is_deleted' => 'INTEGER DEFAULT 0',
+            'changed' => 'INTEGER DEFAULT 0',
+        ]);
     }
 
     private function ensureMediaFilenameTable(PDO $pdo): void
@@ -230,13 +239,18 @@ final class ConnectionFactory
                 sort_order INTEGER NOT NULL DEFAULT 1,
                 status INTEGER NOT NULL DEFAULT 1,
                 attributes_templates_id INTEGER NOT NULL DEFAULT 1,
-                bw_id INTEGER NOT NULL DEFAULT 0
+                bw_id INTEGER NOT NULL DEFAULT 0,
+                changed INTEGER NOT NULL DEFAULT 0
             )'
         );
         $pdo->exec(
             'CREATE UNIQUE INDEX IF NOT EXISTS idx_attributes_parent_model_nocase
              ON attributes(attributes_parent, lower(attributes_model))'
         );
+        $this->ensureColumns($pdo, 'attributes', [
+            'changed' => 'INTEGER NOT NULL DEFAULT 0',
+        ]);
+        $pdo->exec('CREATE INDEX IF NOT EXISTS idx_attributes_changed ON attributes(changed)');
     }
 
     private function ensureSettingsTable(PDO $pdo): void
@@ -260,12 +274,20 @@ final class ConnectionFactory
                 position INTEGER NOT NULL DEFAULT 0,
                 attribute_name TEXT NULL,
                 attribute_value TEXT NULL,
+                changed INTEGER NOT NULL DEFAULT 0,
                 UNIQUE(afs_artikel_id, attributes_parent_id, attributes_id)
             )'
         );
         $pdo->exec(
             'CREATE INDEX IF NOT EXISTS idx_artikel_attribute_map_artikel
              ON artikel_attribute_map(afs_artikel_id)'
+        );
+        $this->ensureColumns($pdo, 'artikel_attribute_map', [
+            'changed' => 'INTEGER NOT NULL DEFAULT 0',
+        ]);
+        $pdo->exec(
+            'CREATE INDEX IF NOT EXISTS idx_artikel_attribute_map_changed
+             ON artikel_attribute_map(changed)'
         );
     }
 
@@ -280,12 +302,20 @@ final class ConnectionFactory
                 position INTEGER NOT NULL DEFAULT 0,
                 is_main INTEGER NOT NULL DEFAULT 0,
                 source_field TEXT NULL,
+                changed INTEGER NOT NULL DEFAULT 0,
                 UNIQUE(afs_artikel_id, position, filename)
             )'
         );
         $pdo->exec(
             'CREATE INDEX IF NOT EXISTS idx_artikel_media_map_artikel
              ON artikel_media_map(afs_artikel_id)'
+        );
+        $this->ensureColumns($pdo, 'artikel_media_map', [
+            'changed' => 'INTEGER NOT NULL DEFAULT 0',
+        ]);
+        $pdo->exec(
+            'CREATE INDEX IF NOT EXISTS idx_artikel_media_map_changed
+             ON artikel_media_map(changed)'
         );
     }
 
@@ -345,6 +375,17 @@ final class ConnectionFactory
         $this->ensureColumns($pdo, 'Meta_Data_Waregruppen', [
             'updated' => 'INTEGER NOT NULL DEFAULT 0',
         ]);
+    }
+
+    private function ensureAfsUpdatePendingTable(PDO $pdo): void
+    {
+        $pdo->exec(
+            'CREATE TABLE IF NOT EXISTS afs_update_pending (
+                entity TEXT NOT NULL,
+                source_id TEXT NOT NULL,
+                PRIMARY KEY(entity, source_id)
+            )'
+        );
     }
 
     private function renameColumnIfExists(PDO $pdo, string $table, string $from, string $to): void

@@ -19,4 +19,8 @@ return [
     'Titel',
     'Art',
   ],
+
+  'hints' => [
+    'on_update_column' => 'Update',
+  ],
 ];

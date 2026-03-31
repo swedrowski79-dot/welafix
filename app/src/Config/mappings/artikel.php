@@ -65,6 +65,7 @@ return [
 
   // Optional: nur als Doku/Hint (dein Importer kann das später nutzen)
   'hints' => [
+    'on_update_column' => 'Update',
     'fanout_images' => [
       'pattern' => 'Bild{n}',
       'range'   => ['from' => 1, 'to' => 10],

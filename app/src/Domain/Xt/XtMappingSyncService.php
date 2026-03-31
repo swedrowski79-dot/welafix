@@ -9,6 +9,7 @@ use PDO;
 use RuntimeException;
 use Welafix\Database\Db;
 use Welafix\Database\ConnectionFactory;
+use Welafix\Domain\Xt\XtDeletedSyncService;
 
 final class XtMappingSyncService
 {
@@ -43,6 +44,7 @@ final class XtMappingSyncService
         $this->pdo = $pdo;
         // separate read connection to avoid write-locks while iterating source rows
         $readPdo = Db::guardSqlite((new ConnectionFactory())->sqlite(), __METHOD__ . ':read');
+        $deleteSync = new XtDeletedSyncService(new ConnectionFactory());
         $batchSize = $this->loadBatchSize($pdo);
         $debugMeta = $this->loadDebugEnabled($pdo);
         $debugEnabled = $debugMeta['enabled'];
@@ -52,6 +54,7 @@ final class XtMappingSyncService
             'ok' => true,
             'targets' => [],
             'nested_set_rebuild' => 0,
+            'prepare' => $deleteSync->prepareDelta(),
             'batch_size' => $batchSize,
             'debug' => $debugEnabled,
             'debug_setting' => $debugMeta['setting'],
@@ -158,6 +161,7 @@ final class XtMappingSyncService
             }
             $stats['warnings_path'] = $this->getLogsDir() . '/xt_mapping_warnings.log';
         }
+        $stats['deleted_cleanup'] = $deleteSync->cleanupDeleted();
         return $stats;
     }
 
@@ -188,6 +192,7 @@ final class XtMappingSyncService
         $updateStmt = $pkCols !== [] ? $this->buildUpdateStatement($pdo, $table, $columns, $existingCols, $pkCols) : null;
         $updateByUnique = $uniqueCols !== [] ? $this->buildUpdateStatement($pdo, $table, $columns, $existingCols, $uniqueCols) : null;
         $updateCols = $pkCols !== [] ? $this->getUpdateColumns($table, $columns, $existingCols, $pkCols) : [];
+        $updateByUniqueCols = $uniqueCols !== [] ? $this->getUpdateColumns($table, $columns, $existingCols, $uniqueCols) : [];
 
         if ($useTransaction) {
             $pdo->beginTransaction();
@@ -263,7 +268,7 @@ final class XtMappingSyncService
                         continue;
                     }
                     if ($existing === null && $hasUnique && $updateByUnique) {
-                        $this->bindValues($updateByUnique, $values, $columns, $existingCols, $uniqueCols, $autoCols, $updateCols);
+                        $this->bindValues($updateByUnique, $values, $columns, $existingCols, $uniqueCols, $autoCols, $updateByUniqueCols);
                         $this->bindPk($updateByUnique, $uniqueCols, $uniqueValues);
                         $updateByUnique->execute();
                         if ($updateByUnique->rowCount() > 0) {
@@ -484,14 +489,35 @@ final class XtMappingSyncService
         if ($source === 'artikel') {
             return 'SELECT s.*, m.meta_title AS meta_title, m.meta_description AS meta_description
                     FROM ' . $table . ' s
-                    LEFT JOIN "Meta_Data_Artikel" m ON m.afs_artikel_id = s.afs_artikel_id';
+                    LEFT JOIN "Meta_Data_Artikel" m ON m.afs_artikel_id = s.afs_artikel_id
+                    WHERE COALESCE(s.changed, 0) = 1';
         }
         if ($source === 'warengruppe') {
             return 'SELECT s.*, m.meta_title AS meta_title, m.meta_description AS meta_description
                     FROM ' . $table . ' s
-                    LEFT JOIN "Meta_Data_Waregruppen" m ON m.afs_wg_id = s.afs_wg_id';
+                    LEFT JOIN "Meta_Data_Waregruppen" m ON m.afs_wg_id = s.afs_wg_id
+                    WHERE COALESCE(s.changed, 0) = 1';
+        }
+        if ($this->sourceHasChangedColumn($source)) {
+            return 'SELECT * FROM ' . $table . ' WHERE COALESCE(changed, 0) = 1';
         }
         return 'SELECT * FROM ' . $table;
+    }
+
+    private function sourceHasChangedColumn(string $source): bool
+    {
+        $pdo = $this->pdo;
+        if (!$pdo || !preg_match('/^[A-Za-z0-9_]+$/', $source)) {
+            return false;
+        }
+        $stmt = $pdo->query('PRAGMA table_info(' . $this->quoteIdentifier($source) . ')');
+        $rows = $stmt ? $stmt->fetchAll(PDO::FETCH_ASSOC) : [];
+        foreach ($rows as $row) {
+            if (strcasecmp((string)($row['name'] ?? ''), 'changed') === 0) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private function loadBatchSize(PDO $pdo): int
@@ -549,7 +575,7 @@ final class XtMappingSyncService
             return $this->evalExpr($raw, $context, $table, $primaryKey, $values);
         }
         if (str_starts_with($expr, 'calc:')) {
-            return $this->calcValue(substr($expr, 5));
+            return $this->calcValue(substr($expr, 5), $context);
         }
         if ($expr === 'auto') {
             return '__AUTO__';
@@ -655,13 +681,25 @@ final class XtMappingSyncService
         return false;
     }
 
-    private function calcValue(string $name): mixed
+    private function calcValue(string $name, array $context = []): mixed
     {
         if ($name === 'now') {
             return (new DateTimeImmutable('now', new DateTimeZone('UTC')))->format('Y-m-d H:i:s');
         }
         if ($name === 'nested_set_left' || $name === 'nested_set_right') {
             return null;
+        }
+        if ($name === 'artikel_status') {
+            $row = $context['artikel'] ?? [];
+            return (int)(($row['is_deleted'] ?? 0) ? 0 : ($row['Internet'] ?? 1));
+        }
+        if ($name === 'warengruppe_status') {
+            $row = $context['warengruppe'] ?? [];
+            return (int)(($row['is_deleted'] ?? 0) ? 0 : ($row['Internet'] ?? 1));
+        }
+        if ($name === 'media_status') {
+            $row = $context['media'] ?? [];
+            return (int)(($row['is_deleted'] ?? 0) ? 0 : 1);
         }
         return null;
     }
@@ -1249,15 +1287,27 @@ final class XtMappingSyncService
     private function createTable(PDO $pdo, string $table, array $columns, mixed $primaryKey): void
     {
         $defs = [];
+        $pk = $this->normalizePk($primaryKey);
+        $autoPk = null;
+        if (count($pk) === 1) {
+            $pkCol = $pk[0];
+            $pkExpr = $columns[$pkCol] ?? null;
+            if (is_string($pkExpr) && strtolower(trim($pkExpr)) === 'auto') {
+                $autoPk = $pkCol;
+            }
+        }
         foreach ($columns as $col => $expr) {
             if (!preg_match('/^[A-Za-z0-9_]+$/', $col)) {
+                continue;
+            }
+            if ($autoPk !== null && $col === $autoPk) {
+                $defs[] = $this->quoteIdentifier($col) . ' INTEGER PRIMARY KEY AUTOINCREMENT';
                 continue;
             }
             $defs[] = $this->quoteIdentifier($col) . ' TEXT';
         }
         $defs[] = 'changed INTEGER NOT NULL DEFAULT 0';
-        $pk = $this->normalizePk($primaryKey);
-        if (count($pk) === 1 && $pk[0] !== '') {
+        if ($autoPk === null && count($pk) === 1 && $pk[0] !== '') {
             $defs[] = 'PRIMARY KEY (' . $this->quoteIdentifier($pk[0]) . ')';
         }
         $pdo->exec('CREATE TABLE IF NOT EXISTS ' . $this->quoteIdentifier($table) . ' (' . implode(',', $defs) . ')');

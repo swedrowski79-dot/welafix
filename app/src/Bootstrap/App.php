@@ -12,6 +12,7 @@ use Welafix\Domain\Warengruppe\WarengruppeSyncService;
 use Welafix\Http\Controllers\ApiController;
 use Welafix\Domain\Artikel\ArtikelSyncService;
 use Welafix\Domain\Export\TemplateExportService;
+use Welafix\Domain\Sync\DailyDeltaSyncService;
 
 final class App
 {
@@ -179,15 +180,24 @@ final class App
         }
         if ($path === '/sync/xt') {
             header('Content-Type: application/json');
+            http_response_code(410);
+            echo json_encode([
+                'ok' => false,
+                'error' => 'Der Legacy-Pfad /sync/xt ist deaktiviert. Verwende /sync/xt-mapping oder /sync/xt-full.',
+                'legacy_note' => 'legacy/xt-import-path/README.md',
+            ]);
+            return;
+        }
+        if ($path === '/sync/xt-mapping') {
+            header('Content-Type: application/json');
             try {
-                $mappingName = isset($_GET['mapping']) ? (string)$_GET['mapping'] : '';
-                if ($mappingName === '') {
-                    echo json_encode(['ok' => false, 'error' => 'mapping fehlt']);
-                    return;
-                }
-                $pageSize = isset($_GET['page_size']) ? (int)$_GET['page_size'] : 500;
-                $service = new \Welafix\Domain\Xt\XtImportService();
-                $stats = $service->import($mappingName, $pageSize);
+                $start = microtime(true);
+                $reconcile = new \Welafix\Domain\Afs\AfsVisibilityReconcileService($factory);
+                $reconcileStats = $reconcile->run();
+                $service = new \Welafix\Domain\Xt\XtMappingSyncService();
+                $stats = $service->run('welafix_xt');
+                $stats['reconcile_deletes'] = $reconcileStats;
+                $stats['duration_ms'] = (int)round((microtime(true) - $start) * 1000);
                 echo json_encode($stats);
             } catch (\Throwable $e) {
                 http_response_code(500);
@@ -195,12 +205,44 @@ final class App
             }
             return;
         }
-        if ($path === '/sync/xt-mapping') {
+        if ($path === '/sync/xt-apply') {
             header('Content-Type: application/json');
             try {
                 $start = microtime(true);
-                $service = new \Welafix\Domain\Xt\XtMappingSyncService();
-                $stats = $service->run('welafix_xt');
+                $apply = new \Welafix\Domain\Xt\XtApiApplyService($factory);
+                $stats = $apply->run('welafix_xt');
+                $reset = new \Welafix\Domain\Afs\AfsUpdateResetService($factory);
+                $stats['reset'] = $reset->run();
+                $stats['duration_ms'] = (int)round((microtime(true) - $start) * 1000);
+                echo json_encode($stats);
+            } catch (\Throwable $e) {
+                http_response_code(500);
+                echo json_encode(['ok' => false, 'error' => $e->getMessage()]);
+            }
+            return;
+        }
+        if ($path === '/sync/daily-delta') {
+            header('Content-Type: application/json');
+            try {
+                $start = microtime(true);
+                $batch = isset($_GET['artikel_batch']) ? (int)$_GET['artikel_batch'] : 500;
+                $batch = max(1, min(10000, $batch));
+                $service = new DailyDeltaSyncService($factory);
+                $stats = $service->run($batch);
+                $stats['duration_ms'] = (int)round((microtime(true) - $start) * 1000);
+                echo json_encode($stats);
+            } catch (\Throwable $e) {
+                http_response_code(500);
+                echo json_encode(['ok' => false, 'error' => $e->getMessage()]);
+            }
+            return;
+        }
+        if ($path === '/sync/reconcile-deletes') {
+            header('Content-Type: application/json');
+            try {
+                $start = microtime(true);
+                $service = new \Welafix\Domain\Afs\AfsVisibilityReconcileService($factory);
+                $stats = $service->run();
                 $stats['duration_ms'] = (int)round((microtime(true) - $start) * 1000);
                 echo json_encode($stats);
             } catch (\Throwable $e) {

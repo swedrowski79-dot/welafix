@@ -8,6 +8,7 @@ use RuntimeException;
 use Welafix\Config\MappingService;
 use Welafix\Database\Db;
 use Welafix\Database\SchemaSyncService;
+use Welafix\Domain\Afs\AfsUpdateQueue;
 use Welafix\Infrastructure\Sqlite\SqliteSchemaHelper;
 
 final class DokumentSyncService
@@ -43,8 +44,10 @@ final class DokumentSyncService
         $this->ensureExtraColumns($sqlite);
 
         $repo = new DokumentRepositoryMssql($mssql);
-        $rows = $repo->fetchAllByMapping($mapping);
+        $deltaOnly = $this->shouldUseSourceUpdateFilter($mapping, $sqlite, 'documents');
+        $rows = $repo->fetchAllByMapping($mapping, $deltaOnly);
         $this->lastSql = $repo->getLastSql();
+        $afsQueue = new AfsUpdateQueue($sqlite);
 
         $stats = [
             'ok' => true,
@@ -73,6 +76,7 @@ final class DokumentSyncService
                 if ($key === '') {
                     continue;
                 }
+                $afsQueue->add('dokument', $key);
 
                 $selectExisting->execute([':source' => 'AFS_DOKUMENT', ':key' => $key]);
                 $existing = $selectExisting->fetch(PDO::FETCH_ASSOC) ?: null;
@@ -97,6 +101,17 @@ final class DokumentSyncService
                     $stats['inserted']++;
                 } else {
                     if (!$hasChanged) {
+                        $touch = $sqlite->prepare(
+                            'UPDATE documents
+                             SET last_seen_at = :last_seen_at,
+                                 is_deleted = 0
+                             WHERE source = :source AND source_id = :_key'
+                        );
+                        $touch->execute([
+                            ':last_seen_at' => date(DATE_ATOM),
+                            ':source' => 'AFS_DOKUMENT',
+                            ':_key' => $key,
+                        ]);
                         continue;
                     }
                     $params = $this->buildParams($row, $selectFields, $key, false);
@@ -115,6 +130,17 @@ final class DokumentSyncService
         }
 
         return $stats;
+    }
+
+    private function shouldUseSourceUpdateFilter(array $mapping, PDO $pdo, string $table): bool
+    {
+        $hints = $mapping['hints'] ?? [];
+        $updateColumn = is_array($hints) ? (string)($hints['on_update_column'] ?? '') : '';
+        if ($updateColumn === '') {
+            return false;
+        }
+        $count = (int)$pdo->query('SELECT COUNT(*) FROM ' . $this->quoteIdentifier($table))->fetchColumn();
+        return $count > 0;
     }
 
     public function getLastSql(): ?string
@@ -138,6 +164,8 @@ final class DokumentSyncService
     {
         $extra = [
             'changed' => 'INTEGER DEFAULT 0',
+            'last_seen_at' => 'TEXT NULL',
+            'is_deleted' => 'INTEGER DEFAULT 0',
         ];
         foreach ($extra as $column => $type) {
             if (!$this->schemaHelper->columnExists($pdo, 'documents', $column)) {
@@ -163,7 +191,7 @@ final class DokumentSyncService
 
     private function prepareInsert(PDO $pdo, array $selectFields): \PDOStatement
     {
-        $cols = array_merge(['source', 'source_id', 'doc_type'], $selectFields, ['changed']);
+        $cols = array_merge(['source', 'source_id', 'doc_type', 'last_seen_at', 'is_deleted'], $selectFields, ['changed']);
         $params = array_map(static fn(string $c): string => ':' . $c, $cols);
         $sql = 'INSERT INTO documents (' . implode(',', $cols) . ') VALUES (' . implode(',', $params) . ')';
         return $pdo->prepare($sql);
@@ -178,6 +206,8 @@ final class DokumentSyncService
         if ($setChanged) {
             $sets[] = 'changed = 1';
         }
+        $sets[] = 'last_seen_at = :last_seen_at';
+        $sets[] = 'is_deleted = 0';
         $sql = 'UPDATE documents SET ' . implode(', ', $sets) . ' WHERE source = :source AND source_id = :_key';
         return $pdo->prepare($sql);
     }
@@ -194,9 +224,11 @@ final class DokumentSyncService
             $params[':' . $col] = $row[$col] ?? null;
         }
         $params[':source'] = 'AFS_DOKUMENT';
+        $params[':last_seen_at'] = date(DATE_ATOM);
         if ($insert) {
             $params[':source_id'] = $key;
             $params[':doc_type'] = $row['Art'] ?? 'AFS_DOKUMENT';
+            $params[':is_deleted'] = 0;
         }
         if ($insert) {
             $params[':changed'] = 1;

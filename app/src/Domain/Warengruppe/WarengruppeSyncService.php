@@ -11,6 +11,7 @@ use Welafix\Config\MappingService;
 use Welafix\Database\ConnectionFactory;
 use Welafix\Database\Db;
 use Welafix\Database\SchemaSyncService;
+use Welafix\Domain\Afs\AfsUpdateQueue;
 use Welafix\Domain\ChangeTracking\ChangeTracker;
 use Welafix\Infrastructure\Sqlite\SqliteSchemaHelper;
 
@@ -49,9 +50,11 @@ final class WarengruppeSyncService
         $mssqlRepo = new WarengruppeRepositoryMssql($mssql);
         $sqliteRepo = new WarengruppeRepositorySqlite($sqlite);
         $this->schemaSync->ensureSqliteColumnsMatchMssql($mssql, $sqlite, 'dbo.Warengruppe', 'warengruppe', $selectFields);
+        $deltaOnly = $this->shouldUseSourceUpdateFilter($mapping, $sqlite, 'warengruppe');
+        $afsQueue = new AfsUpdateQueue($sqlite);
 
         try {
-            $rows = $mssqlRepo->fetchAllByMapping($mapping);
+            $rows = $mssqlRepo->fetchAllByMapping($mapping, $deltaOnly);
             $this->lastSql = $mssqlRepo->getLastSql();
         } catch (\Throwable $e) {
             $this->lastSql = $mssqlRepo->getLastSql();
@@ -119,6 +122,7 @@ final class WarengruppeSyncService
                     $extras = $this->fillMissingExtras($prepared['extras'], $this->getRawFieldNames($selectFields));
 
                     $result = $sqliteRepo->upsert($afsWgId, $name, $parentId, $extras, $seenAt, $diffColumns);
+                    $afsQueue->add('warengruppe', (string)$afsWgId);
                     if ($result['inserted']) $stats['inserted']++;
                     if ($result['updated']) $stats['updated']++;
                     if ($result['unchanged']) $stats['unchanged']++;
@@ -135,6 +139,17 @@ final class WarengruppeSyncService
 
         $stats['paths_updated'] = $this->buildAndStorePathsAndSeo($this->factory->sqlite());
         return $stats;
+    }
+
+    private function shouldUseSourceUpdateFilter(array $mapping, PDO $pdo, string $table): bool
+    {
+        $hints = $mapping['hints'] ?? [];
+        $updateColumn = is_array($hints) ? (string)($hints['on_update_column'] ?? '') : '';
+        if ($updateColumn === '') {
+            return false;
+        }
+        $count = (int)$pdo->query('SELECT COUNT(*) FROM ' . $this->quoteIdentifier($table))->fetchColumn();
+        return $count > 0;
     }
 
     public function getLastSql(): ?string
@@ -256,7 +271,7 @@ final class WarengruppeSyncService
      */
     private function loadAllWarengruppen(PDO $pdo): array
     {
-        $stmt = $pdo->query('SELECT afs_wg_id, name, parent_id, path, path_ids, seo_url, change_reason FROM warengruppe');
+        $stmt = $pdo->query('SELECT afs_wg_id, name, parent_id, path, path_ids, seo_url, change_reason, changed_fields, is_deleted FROM warengruppe WHERE COALESCE(is_deleted,0)=0');
         $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
         $map = [];
         foreach ($rows as $row) {

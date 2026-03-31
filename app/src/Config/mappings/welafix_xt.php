@@ -43,9 +43,10 @@ return [
       'table' => 'xt_categories',
       'base' => 'warengruppe',
       'primary_key' => 'categories_id',
+      'unique_key' => ['external_id'],
       'mode' => 'upsert',
       'columns' => [
-        'categories_id'              => 'lookup(xt_categories, external_id, warengruppe.afs_wg_id, categories_id)',
+        'categories_id'              => 'auto',
         'external_id'                => 'warengruppe.afs_wg_id',
         'permission_id'              => 'default:""',
         'categories_owner'           => 'default:1',
@@ -54,7 +55,7 @@ return [
         'categories_right'           => 'calc:nested_set_right',
         'categories_level'           => 'warengruppe.Ebene+1',
         'parent_id'                  => 'lookup(xt_categories, external_id, warengruppe.parent_id, categories_id)',
-        'categories_status'          => 'warengruppe.Internet',
+        'categories_status'          => 'calc:warengruppe_status',
         'categories_template'        => 'default:""',
         'listing_template'           => 'default:""',
         'sort_order'                 => 'default:0',
@@ -102,7 +103,7 @@ return [
         'type'              => 'media.type',
         'class'             => 'media.source',
         'download_status'   => 'default:free',
-        'status'            => 'default:1',
+        'status'            => 'calc:media_status',
         'owner'             => 'default:1',
         'date_added'           => 'calc:now',
         'last_modified'     => 'calc:now',
@@ -152,22 +153,6 @@ return [
       ],
     ],
 
-    'xt_media_link' => [
-      'table' => 'xt_media_link',
-      'base' => 'artikel_media_map',
-      'primary_key' => 'ml_id',
-      'unique_key' => ['m_id', 'link_id'],
-      'mode' => 'upsert',
-      'columns' => [
-        'ml_id'     => 'auto',
-        'm_id'      => 'lookup(xt_media, external_id, artikel_media_map.media_id, id)',
-        'link_id'   => 'lookup(xt_products, external_id, artikel_media_map.afs_artikel_id, products_id)',
-        'class'     => 'default:""',
-        'type'      => 'default:""',
-        'sort_order'=> 'artikel_media_map.position',
-      ],
-    ],
-
     // =========================
     // XT: Produktattribute
     // =========================
@@ -202,18 +187,6 @@ return [
       ],
     ],
 
-    'xt_plg_products_to_attributes' => [
-      'table' => 'xt_plg_products_to_attributes',
-      'base' => 'artikel_attribute_map',
-      'primary_key' => ['products_id', 'attributes_id', 'attributes_parent_id'],
-      'mode' => 'upsert',
-      'columns' => [
-        'products_id'          => 'lookup(xt_products, external_id, artikel_attribute_map.afs_artikel_id, products_id)',
-        'attributes_id'        => 'lookup(xt_plg_products_attributes, attributes_id, artikel_attribute_map.attributes_id, attributes_id)',
-        'attributes_parent_id' => 'lookup(xt_plg_products_attributes, attributes_id, artikel_attribute_map.attributes_parent_id, attributes_id)',
-      ],
-    ],
-
    /* 'xt_media_to_media_gallery' => [
       'table' => 'xt_media_to_media_gallery',
       'primary_key' => 'ml_id',
@@ -232,9 +205,10 @@ return [
       'table' => 'xt_products',
       'base' => 'artikel',
       'primary_key' => 'products_id',
+      'unique_key' => ['external_id'],
       'mode' => 'upsert',
       'columns' => [
-        'products_id'                     => 'lookup(xt_products, external_id, artikel.afs_artikel_id, products_id)',
+        'products_id'                     => 'auto',
         'external_id'                     => 'artikel.afs_artikel_id',
         'permission_id'                   => 'default:0',
         'products_owner'                  => 'default:0',
@@ -261,7 +235,7 @@ return [
         // Ich übernehme sie 1:1 aus deiner Tabelle:
         'products_price'                  => 'round(artikel.VK3,4)',
         'products_weight'                 => 'default:0',
-        'products_status'                 => 'artikel.Internet',
+        'products_status'                 => 'calc:artikel_status',
         'products_tax_class_id'           => 'default:0',
         'date_added'                      => 'calc:now',
         'last_modified'                   => 'calc:now',
@@ -293,6 +267,34 @@ return [
         'products_keywords'     => 'default:""',
         'products_url'   => 'default:""',
         'products_store_id' => 'default:1',
+      ],
+    ],
+
+    'xt_plg_products_to_attributes' => [
+      'table' => 'xt_plg_products_to_attributes',
+      'base' => 'artikel_attribute_map',
+      'primary_key' => ['products_id', 'attributes_id', 'attributes_parent_id'],
+      'mode' => 'upsert',
+      'columns' => [
+        'products_id'          => 'lookup(xt_products, external_id, artikel_attribute_map.afs_artikel_id, products_id)',
+        'attributes_id'        => 'lookup(xt_plg_products_attributes, attributes_id, artikel_attribute_map.attributes_id, attributes_id)',
+        'attributes_parent_id' => 'lookup(xt_plg_products_attributes, attributes_id, artikel_attribute_map.attributes_parent_id, attributes_id)',
+      ],
+    ],
+
+    'xt_media_link' => [
+      'table' => 'xt_media_link',
+      'base' => 'artikel_media_map',
+      'primary_key' => 'ml_id',
+      'unique_key' => ['m_id', 'link_id'],
+      'mode' => 'upsert',
+      'columns' => [
+        'ml_id'     => 'auto',
+        'm_id'      => 'lookup(xt_media, external_id, artikel_media_map.media_id, id)',
+        'link_id'   => 'lookup(xt_products, external_id, artikel_media_map.afs_artikel_id, products_id)',
+        'class'     => 'default:""',
+        'type'      => 'default:""',
+        'sort_order'=> 'artikel_media_map.position',
       ],
     ],
 
