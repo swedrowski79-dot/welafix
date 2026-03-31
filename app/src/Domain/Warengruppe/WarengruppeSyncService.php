@@ -12,7 +12,6 @@ use Welafix\Database\ConnectionFactory;
 use Welafix\Database\Db;
 use Welafix\Database\SchemaSyncService;
 use Welafix\Domain\ChangeTracking\ChangeTracker;
-use Welafix\Domain\FileDb\FileDbTemplateApplier;
 use Welafix\Infrastructure\Sqlite\SqliteSchemaHelper;
 
 final class WarengruppeSyncService
@@ -74,8 +73,6 @@ final class WarengruppeSyncService
         $preparedRows = [];
         $newColumns = [];
         $allowedLookup = array_flip($selectFields);
-        $applyFileDb = $this->shouldApplyFileDbOnSync();
-        $fileDbApplier = $applyFileDb ? new FileDbTemplateApplier() : null;
         $diffColumns = $selectFields;
 
         foreach ($rows as $row) {
@@ -125,13 +122,6 @@ final class WarengruppeSyncService
                     if ($result['inserted']) $stats['inserted']++;
                     if ($result['updated']) $stats['updated']++;
                     if ($result['unchanged']) $stats['unchanged']++;
-
-                    if ($fileDbApplier) {
-                        $context = array_merge($row, $extras);
-                        $context['Bezeichnung'] = $name;
-                        $fileDbApplier->applyWarengruppe($pdo, $afsWgId, $name, $context);
-                    }
-
                 } catch (\Throwable $e) {
                     $stats['errors_count']++;
                     $this->log('Import-Fehler: ' . $e->getMessage());
@@ -502,9 +492,4 @@ final class WarengruppeSyncService
         @file_put_contents($path, $line, FILE_APPEND);
     }
 
-    private function shouldApplyFileDbOnSync(): bool
-    {
-        $flag = strtolower((string)env('FILEDB_APPLY_ON_SYNC', 'false'));
-        return $flag === '1' || $flag === 'true' || $flag === 'yes';
-    }
 }

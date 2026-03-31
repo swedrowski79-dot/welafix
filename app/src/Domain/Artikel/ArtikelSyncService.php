@@ -11,7 +11,6 @@ use Welafix\Database\ConnectionFactory;
 use Welafix\Database\Db;
 use Welafix\Database\SchemaSyncService;
 use Welafix\Domain\Attribute\AttributesBuilder;
-use Welafix\Domain\FileDb\FileDbTemplateApplier;
 use Welafix\Infrastructure\Sqlite\SqliteSchemaHelper;
 
 final class ArtikelSyncService
@@ -97,8 +96,6 @@ final class ArtikelSyncService
             $diffColumns = $extraKeys;
 
             $wgSeoMap = $this->loadWarengruppeSeoMap($pdo);
-            $applyFileDb = $this->shouldApplyFileDbOnSync();
-            $fileDbApplier = $applyFileDb ? new FileDbTemplateApplier() : null;
             $attributesBuilder = new AttributesBuilder($pdo);
             $masterCount = 0;
             $slaveCount = 0;
@@ -189,16 +186,6 @@ final class ArtikelSyncService
                         $batchStats['masters'] = $masterCount;
                         $batchStats['slaves'] = $slaveCount;
                         $batchStats['normal'] = $normalCount;
-
-                        if ($fileDbApplier) {
-                            $context = array_merge($row, $extras);
-                            $context['Artikelnummer'] = $artikelnummer;
-                            $context['Bezeichnung'] = $name;
-                            $context['Warengruppe'] = $warengruppeId;
-                        $context['seo_url'] = $extras['seo_url'] ?? null;
-                        $fileDbApplier->applyArtikel($pdo, $artikelnummer, $context);
-                        }
-
                         $attributesBuilder->ingestRow($row);
 
                     } catch (\Throwable $e) {
@@ -304,12 +291,6 @@ final class ArtikelSyncService
         $line = "[{$timestamp}] {$message}\n";
         $path = __DIR__ . '/../../../logs/app.log';
         @file_put_contents($path, $line, FILE_APPEND);
-    }
-
-    private function shouldApplyFileDbOnSync(): bool
-    {
-        $flag = strtolower((string)env('FILEDB_APPLY_ON_SYNC', 'false'));
-        return $flag === '1' || $flag === 'true' || $flag === 'yes';
     }
 
     private function logMissingWarengruppeOnce(int $warengruppeId, string $artikelnummer): void

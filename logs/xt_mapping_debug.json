@@ -83,8 +83,8 @@
         },
         "xt_seo_url_products": {
             "inserted": 0,
-            "updated": 82,
-            "unchanged": 5268,
+            "updated": 0,
+            "unchanged": 5350,
             "needs_nested_set": false,
             "source_rows": 5350,
             "base": "artikel",
@@ -92,8 +92,8 @@
         },
         "xt_seo_url_wg": {
             "inserted": 0,
-            "updated": 3,
-            "unchanged": 190,
+            "updated": 0,
+            "unchanged": 193,
             "needs_nested_set": false,
             "source_rows": 193,
             "base": "warengruppe",

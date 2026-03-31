@@ -68,6 +68,36 @@ CREATE TABLE IF NOT EXISTS settings (
   value TEXT
 );
 
+CREATE TABLE IF NOT EXISTS artikel_extra_data (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  Artikelnummer TEXT NOT NULL UNIQUE,
+  updated_at TEXT NULL
+);
+
+CREATE TABLE IF NOT EXISTS warengruppe_extra_data (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  warengruppenname TEXT NOT NULL UNIQUE,
+  updated_at TEXT NULL
+);
+
+CREATE TABLE IF NOT EXISTS Meta_Data_Artikel (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  afs_artikel_id TEXT NOT NULL UNIQUE,
+  artikelnummer TEXT NOT NULL,
+  meta_title TEXT NULL,
+  meta_description TEXT NULL,
+  updated INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS Meta_Data_Waregruppen (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  afs_wg_id INTEGER NOT NULL UNIQUE,
+  warengruppenname TEXT NOT NULL,
+  meta_title TEXT NULL,
+  meta_description TEXT NULL,
+  updated INTEGER NOT NULL DEFAULT 0
+);
+
 CREATE TABLE IF NOT EXISTS attributes (
   attributes_id INTEGER PRIMARY KEY AUTOINCREMENT,
   attributes_parent INTEGER NOT NULL DEFAULT 0,

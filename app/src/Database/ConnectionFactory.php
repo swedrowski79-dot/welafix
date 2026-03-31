@@ -110,6 +110,8 @@ final class ConnectionFactory
             'changed' => 'INTEGER DEFAULT 0',
             'change_reason' => 'TEXT',
         ]);
+        $this->dropColumnsIfExist($pdo, 'artikel', ['meta_title', 'meta_description']);
+        $this->dropColumnsIfExist($pdo, 'warengruppe', ['meta_title', 'meta_description']);
 
         $this->ensureDocumentSchema($pdo);
         $this->ensureMediaFilenameTable($pdo);
@@ -124,6 +126,10 @@ final class ConnectionFactory
         $this->ensureDocumentsExtra($pdo);
         $this->ensureAttributesSchema($pdo);
         $this->ensureSettingsTable($pdo);
+        $this->ensureArtikelExtraDataTable($pdo);
+        $this->ensureWarengruppeExtraDataTable($pdo);
+        $this->ensureMetaDataArtikelTable($pdo);
+        $this->ensureMetaDataWarengruppenTable($pdo);
     }
 
     /**
@@ -145,6 +151,33 @@ final class ConnectionFactory
                 continue;
             }
             $pdo->exec("ALTER TABLE {$table} ADD COLUMN {$name} {$type}");
+        }
+    }
+
+    /**
+     * @param array<int, string> $columns
+     */
+    private function dropColumnsIfExist(PDO $pdo, string $table, array $columns): void
+    {
+        $stmt = $pdo->query('PRAGMA table_info(' . $this->quoteIdentifier($table) . ')');
+        $rows = $stmt ? $stmt->fetchAll(PDO::FETCH_ASSOC) : [];
+        $existing = [];
+        foreach ($rows as $row) {
+            $name = strtolower((string)($row['name'] ?? ''));
+            if ($name !== '') {
+                $existing[$name] = true;
+            }
+        }
+
+        foreach ($columns as $column) {
+            $key = strtolower($column);
+            if (!isset($existing[$key])) {
+                continue;
+            }
+            $pdo->exec(
+                'ALTER TABLE ' . $this->quoteIdentifier($table) .
+                ' DROP COLUMN ' . $this->quoteIdentifier($column)
+            );
         }
     }
 
@@ -212,6 +245,94 @@ final class ConnectionFactory
                 value TEXT
             )'
         );
+    }
+
+    private function ensureArtikelExtraDataTable(PDO $pdo): void
+    {
+        $pdo->exec(
+            'CREATE TABLE IF NOT EXISTS artikel_extra_data (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                Artikelnummer TEXT NOT NULL UNIQUE,
+                updated_at TEXT NULL
+            )'
+        );
+        $this->renameColumnIfExists($pdo, 'artikel_extra_data', 'source_dir', 'Artikelnummer');
+    }
+
+    private function ensureWarengruppeExtraDataTable(PDO $pdo): void
+    {
+        $pdo->exec(
+            'CREATE TABLE IF NOT EXISTS warengruppe_extra_data (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                warengruppenname TEXT NOT NULL UNIQUE,
+                updated_at TEXT NULL
+            )'
+        );
+        $this->renameColumnIfExists($pdo, 'warengruppe_extra_data', 'source_dir', 'warengruppenname');
+    }
+
+    private function ensureMetaDataArtikelTable(PDO $pdo): void
+    {
+        $pdo->exec(
+            'CREATE TABLE IF NOT EXISTS Meta_Data_Artikel (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                afs_artikel_id TEXT NOT NULL UNIQUE,
+                artikelnummer TEXT NOT NULL,
+                meta_title TEXT NULL,
+                meta_description TEXT NULL,
+                updated INTEGER NOT NULL DEFAULT 0
+            )'
+        );
+        $this->ensureColumns($pdo, 'Meta_Data_Artikel', [
+            'updated' => 'INTEGER NOT NULL DEFAULT 0',
+        ]);
+    }
+
+    private function ensureMetaDataWarengruppenTable(PDO $pdo): void
+    {
+        $pdo->exec(
+            'CREATE TABLE IF NOT EXISTS Meta_Data_Waregruppen (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                afs_wg_id INTEGER NOT NULL UNIQUE,
+                warengruppenname TEXT NOT NULL,
+                meta_title TEXT NULL,
+                meta_description TEXT NULL,
+                updated INTEGER NOT NULL DEFAULT 0
+            )'
+        );
+        $this->ensureColumns($pdo, 'Meta_Data_Waregruppen', [
+            'updated' => 'INTEGER NOT NULL DEFAULT 0',
+        ]);
+    }
+
+    private function renameColumnIfExists(PDO $pdo, string $table, string $from, string $to): void
+    {
+        $stmt = $pdo->query('PRAGMA table_info(' . $this->quoteIdentifier($table) . ')');
+        $rows = $stmt ? $stmt->fetchAll(PDO::FETCH_ASSOC) : [];
+        $hasFrom = false;
+        $hasTo = false;
+        foreach ($rows as $row) {
+            $name = (string)($row['name'] ?? '');
+            if (strcasecmp($name, $from) === 0) {
+                $hasFrom = true;
+            }
+            if (strcasecmp($name, $to) === 0) {
+                $hasTo = true;
+            }
+        }
+
+        if ($hasFrom && !$hasTo) {
+            $pdo->exec(
+                'ALTER TABLE ' . $this->quoteIdentifier($table) .
+                ' RENAME COLUMN ' . $this->quoteIdentifier($from) .
+                ' TO ' . $this->quoteIdentifier($to)
+            );
+        }
+    }
+
+    private function quoteIdentifier(string $name): string
+    {
+        return '"' . str_replace('"', '""', $name) . '"';
     }
 
     private function logMssqlConfigOnce(string $host, string $port, string $db, string $user): void

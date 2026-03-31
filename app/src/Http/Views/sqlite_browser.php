@@ -21,6 +21,7 @@ declare(strict_types=1);
       <option value="200">200</option>
     </select>
     <button class="btn" id="clear-table-btn" type="button">Tabelle leeren</button>
+    <button class="btn" id="drop-table-btn" type="button">Tabelle löschen</button>
   </div>
   <div id="error-box" class="error" style="margin-top:10px; display:none;"></div>
 </div>
@@ -46,12 +47,14 @@ declare(strict_types=1);
     const thead = dataTable.querySelector('thead');
     const tbody = dataTable.querySelector('tbody');
     const clearBtn = document.getElementById('clear-table-btn');
+    const dropBtn = document.getElementById('drop-table-btn');
     const prevBtn = document.getElementById('prev-btn');
     const nextBtn = document.getElementById('next-btn');
     const pageWindow = document.getElementById('page-window');
     const totalCount = document.getElementById('total-count');
     const pageCurrent = document.getElementById('page-current');
     const perPageSelect = document.getElementById('per-page');
+    let activeEditor = null;
 
     const state = {
       table: '',
@@ -83,6 +86,9 @@ declare(strict_types=1);
     };
 
     const renderTable = (columns, rows) => {
+      if (activeEditor) {
+        activeEditor = null;
+      }
       thead.innerHTML = '';
       tbody.innerHTML = '';
 
@@ -116,14 +122,108 @@ declare(strict_types=1);
 
       rows.forEach((row) => {
         const tr = document.createElement('tr');
+        tr.dataset.rowid = row.__rowid === undefined ? '' : String(row.__rowid);
         columns.forEach((col) => {
           const td = document.createElement('td');
           const value = row[col];
           td.textContent = value === null || value === undefined ? '' : String(value);
+          td.dataset.column = col;
+          td.dataset.value = value === null || value === undefined ? '' : String(value);
+          td.title = 'Doppelklick zum Bearbeiten';
+          td.addEventListener('dblclick', () => {
+            startEditCell(td, tr.dataset.rowid, col);
+          });
           tr.appendChild(td);
         });
         tbody.appendChild(tr);
       });
+    };
+
+    const saveCell = async (td, rowId, column, value) => {
+      const body = new URLSearchParams();
+      body.set('name', state.table);
+      body.set('column', column);
+      body.set('rowid', rowId);
+      body.set('value', value);
+
+      const response = await fetch('/api/sqlite/update-cell', {
+        method: 'POST',
+        headers: { 'Accept': 'application/json' },
+        body
+      });
+      const json = await response.json();
+      if (!response.ok) {
+        throw new Error(json.error || 'Fehler beim Speichern.');
+      }
+      td.textContent = value;
+      td.dataset.value = value;
+    };
+
+    const finishEditCell = async (commit) => {
+      if (!activeEditor) return;
+      const { td, input, originalValue, rowId, column } = activeEditor;
+      activeEditor = null;
+      const nextValue = input.value;
+
+      if (!commit || nextValue === originalValue) {
+        td.textContent = originalValue;
+        td.dataset.value = originalValue;
+        return;
+      }
+
+      td.textContent = 'Speichere...';
+      try {
+        await saveCell(td, rowId, column, nextValue);
+        showError('');
+      } catch (e) {
+        td.textContent = originalValue;
+        td.dataset.value = originalValue;
+        showError(e.message);
+      }
+    };
+
+    const startEditCell = (td, rowId, column) => {
+      if (!rowId) return;
+      if (activeEditor && activeEditor.td === td) return;
+      if (activeEditor) {
+        finishEditCell(false);
+      }
+
+      const originalValue = td.dataset.value || '';
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.value = originalValue;
+      input.style.width = '100%';
+      input.style.minWidth = '140px';
+
+      td.innerHTML = '';
+      td.appendChild(input);
+      input.focus();
+      input.select();
+
+      let finished = false;
+      const done = async (commit) => {
+        if (finished) return;
+        finished = true;
+        await finishEditCell(commit);
+      };
+
+      input.addEventListener('keydown', async (event) => {
+        if (event.key === 'Enter') {
+          event.preventDefault();
+          await done(true);
+        }
+        if (event.key === 'Escape') {
+          event.preventDefault();
+          await done(false);
+        }
+      });
+
+      input.addEventListener('blur', async () => {
+        await done(true);
+      });
+
+      activeEditor = { td, input, originalValue, rowId, column };
     };
 
     const buildPageWindow = (current, total) => {
@@ -293,7 +393,7 @@ declare(strict_types=1);
     if (clearBtn) {
       clearBtn.addEventListener('click', async () => {
         if (!state.table) return;
-        const ok = confirm('Willst du wirklich die Tabelle ' + state.table + ' löschen?');
+        const ok = confirm('Willst du wirklich den Inhalt der Tabelle ' + state.table + ' leeren?');
         if (!ok) return;
         setLoading(true);
         showError('');
@@ -310,6 +410,39 @@ declare(strict_types=1);
           state.q = '';
           searchInput.value = '';
           await loadTableData();
+        } catch (e) {
+          showError(e.message);
+        } finally {
+          setLoading(false);
+        }
+      });
+    }
+
+    if (dropBtn) {
+      dropBtn.addEventListener('click', async () => {
+        if (!state.table) return;
+        const ok = confirm('Willst du wirklich die Tabelle ' + state.table + ' komplett löschen?');
+        if (!ok) return;
+        setLoading(true);
+        showError('');
+        try {
+          const response = await fetch('/api/sqlite/drop?name=' + encodeURIComponent(state.table), {
+            method: 'POST',
+            headers: { 'Accept': 'application/json' }
+          });
+          const json = await response.json();
+          if (!response.ok) {
+            throw new Error(json.error || 'Fehler beim Löschen der Tabelle.');
+          }
+
+          state.table = '';
+          state.page = 1;
+          state.q = '';
+          state.totalRows = 0;
+          searchInput.value = '';
+          renderTable([], []);
+          renderPaginator();
+          await loadTables();
         } catch (e) {
           showError(e.message);
         } finally {

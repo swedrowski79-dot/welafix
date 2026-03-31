@@ -108,7 +108,7 @@ final class SqliteBrowserController
 
             $tableId = $this->quoteIdentifier($name);
             $columnList = array_map([$this, 'quoteIdentifier'], $columns);
-            $selectSql = 'SELECT ' . implode(', ', $columnList) . " FROM {$tableId}";
+            $selectSql = 'SELECT rowid AS "__rowid", ' . implode(', ', $columnList) . " FROM {$tableId}";
             $countSql = "SELECT COUNT(*) FROM {$tableId}";
             if ($whereSql !== '') {
                 $selectSql .= ' WHERE ' . $whereSql;
@@ -182,6 +182,106 @@ final class SqliteBrowserController
                 'ok' => true,
                 'table' => $name,
                 'message' => 'Tabelle geleert.',
+            ]);
+        } catch (\Throwable $e) {
+            $this->jsonResponse([
+                'error' => $e->getMessage(),
+                'sql' => null,
+                'params' => null,
+            ], 500);
+        }
+    }
+
+    public function dropTable(): void
+    {
+        try {
+            $pdo = $this->factory->sqlite();
+
+            $name = isset($_GET['name']) ? trim((string)$_GET['name']) : '';
+            if ($name === '') {
+                $this->jsonResponse(['error' => 'Tabellenname fehlt.', 'sql' => null, 'params' => null], 400);
+                return;
+            }
+
+            $allowedTables = $this->getAllowedTables($pdo);
+            if (!isset($allowedTables[$name])) {
+                $this->jsonResponse(['error' => 'Unbekannte Tabelle.', 'sql' => null, 'params' => null], 400);
+                return;
+            }
+
+            $pdo->exec('DROP TABLE ' . $this->quoteIdentifier($name));
+
+            $this->jsonResponse([
+                'ok' => true,
+                'table' => $name,
+                'message' => 'Tabelle gelöscht.',
+            ]);
+        } catch (\Throwable $e) {
+            $this->jsonResponse([
+                'error' => $e->getMessage(),
+                'sql' => null,
+                'params' => null,
+            ], 500);
+        }
+    }
+
+    public function updateCell(): void
+    {
+        try {
+            $pdo = $this->factory->sqlite();
+
+            $name = isset($_POST['name']) ? trim((string)$_POST['name']) : '';
+            $column = isset($_POST['column']) ? trim((string)$_POST['column']) : '';
+            $rowIdRaw = isset($_POST['rowid']) ? trim((string)$_POST['rowid']) : '';
+            $value = $_POST['value'] ?? '';
+
+            if ($name === '' || $column === '' || $rowIdRaw === '') {
+                $this->jsonResponse(['error' => 'name, column oder rowid fehlt.', 'sql' => null, 'params' => null], 400);
+                return;
+            }
+
+            $allowedTables = $this->getAllowedTables($pdo);
+            if (!isset($allowedTables[$name])) {
+                $this->jsonResponse(['error' => 'Unbekannte Tabelle.', 'sql' => null, 'params' => null], 400);
+                return;
+            }
+
+            $tableInfo = $this->getTableInfo($pdo, $name);
+            $allowedColumns = [];
+            foreach ($tableInfo as $row) {
+                $colName = (string)($row['name'] ?? '');
+                if ($colName !== '') {
+                    $allowedColumns[strtolower($colName)] = $colName;
+                }
+            }
+
+            $columnKey = strtolower($column);
+            if (!isset($allowedColumns[$columnKey])) {
+                $this->jsonResponse(['error' => 'Unbekannte Spalte.', 'sql' => null, 'params' => null], 400);
+                return;
+            }
+
+            $rowId = (int)$rowIdRaw;
+            if ($rowId <= 0) {
+                $this->jsonResponse(['error' => 'Ungültige rowid.', 'sql' => null, 'params' => null], 400);
+                return;
+            }
+
+            $actualColumn = $allowedColumns[$columnKey];
+            $stmt = $pdo->prepare(
+                'UPDATE ' . $this->quoteIdentifier($name) .
+                ' SET ' . $this->quoteIdentifier($actualColumn) . ' = :value WHERE rowid = :rowid'
+            );
+            $stmt->bindValue(':value', (string)$value, PDO::PARAM_STR);
+            $stmt->bindValue(':rowid', $rowId, PDO::PARAM_INT);
+            $stmt->execute();
+
+            $this->jsonResponse([
+                'ok' => true,
+                'table' => $name,
+                'column' => $actualColumn,
+                'rowid' => $rowId,
+                'value' => (string)$value,
             ]);
         } catch (\Throwable $e) {
             $this->jsonResponse([

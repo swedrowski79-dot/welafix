@@ -28,11 +28,13 @@ declare(strict_types=1);
     </div>
     <div class="tile">
       <div class="tile-label">Sync</div>
+      <div class="muted" style="margin-bottom: 8px;">AFS Schritte</div>
       <div class="btn-row">
-        <button class="btn" type="button" data-endpoint="/sync/warengruppe">Warengruppe</button>
-        <button class="btn" type="button" data-endpoint="/sync/artikel" data-sync="artikel">Artikel</button>
-        <button class="btn" type="button" data-endpoint="/sync/dokument">Dokument</button>
-        <button class="btn" type="button" data-endpoint="/sync/media">Media Sync</button>
+        <button class="btn" type="button" data-endpoint="/sync/warengruppe">1. AFS_Warengruppen</button>
+        <button class="btn" type="button" data-endpoint="/sync/artikel" data-sync="artikel">2. AFS_Artikel</button>
+        <button class="btn" type="button" data-endpoint="/api/meta/fill">3. fill_Meta</button>
+        <button class="btn" type="button" data-endpoint="/sync/dokument">4. AFS_Dokumente</button>
+        <button class="btn" type="button" data-endpoint="/sync/media">5. AFS_Media</button>
         <button class="btn" type="button" id="artikel-cancel" disabled>Abbrechen</button>
       </div>
       <div class="inline-controls">
@@ -51,14 +53,17 @@ declare(strict_types=1);
         <input id="xt-batch" type="number" min="50" max="5000" step="50" value="500" />
         <button class="btn" type="button" id="xt-batch-save">Speichern</button>
       </div>
+      <div class="muted" style="margin: 14px 0 8px;">XT Schritte</div>
+      <div class="btn-row">
+        <button class="btn" type="button" data-endpoint="/sync/xt-mapping">XT Mapping Sync</button>
+      </div>
     </div>
     <div class="tile">
       <div class="tile-label">Tools</div>
       <a class="btn" href="/dashboard/sqlite">SQLite Browser</a>
       <button class="btn" type="button" data-endpoint="/api/filedb/check">FileDB Check</button>
-      <button class="btn" type="button" data-endpoint="/api/filedb/apply">FileDB Apply</button>
+      <button class="btn" type="button" data-endpoint="/api/filedb/apply">FileDB to SQLite</button>
       <button class="btn" type="button" data-endpoint="/migrate.php">Migration</button>
-      <button class="btn" type="button" data-endpoint="/sync/xt-mapping">XT Mapping Sync</button>
       <button class="btn" type="button" data-endpoint="/sync/xt-full?mapping=xt_commerce_full_tables">XT Full Tables Sync</button>
       <button class="btn" type="button" id="xt-import-open">XT-Commerce Tabellen Import</button>
     </div>

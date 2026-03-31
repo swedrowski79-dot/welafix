@@ -3,6 +3,8 @@ declare(strict_types=1);
 
 namespace Welafix\Domain\FileDb;
 
+use DateTimeImmutable;
+use DateTimeZone;
 use PDO;
 
 final class FileDbTemplateApplier
@@ -23,54 +25,20 @@ final class FileDbTemplateApplier
         $this->baseWarengruppe = rtrim($base, '/\\') . '/Warengruppen';
     }
 
-    /**
-     * @param array<string, mixed> $context
-     */
-    public function applyArtikel(PDO $pdo, string $artikelnummer, array $context): void
+    public function importArtikelDirectories(PDO $pdo): array
     {
         if (!$this->isReadEnabled()) {
-            return;
+            return ['imported' => 0, 'directories' => 0];
         }
-        $artikelnummer = trim($artikelnummer);
-        if ($artikelnummer === '') {
-            return;
-        }
-        $dir = $this->baseArtikel . '/' . $artikelnummer;
-        if (is_dir($dir)) {
-            $templates = $this->loadTemplates($dir);
-        } else {
-            $templates = $this->loadTemplates($this->baseArtikel . '/Standard');
-        }
-        if ($templates === []) {
-            return;
-        }
-        $values = $this->renderTemplates($templates, $context);
-        $this->updateRow($pdo, 'artikel', 'artikelnummer', $artikelnummer, $values);
+        return $this->importDirectories($pdo, $this->baseArtikel, 'artikel_extra_data', 'Artikelnummer');
     }
 
-    /**
-     * @param array<string, mixed> $context
-     */
-    public function applyWarengruppe(PDO $pdo, int $afsWgId, string $bezeichnung, array $context): void
+    public function importWarengruppeDirectories(PDO $pdo): array
     {
         if (!$this->isReadEnabled()) {
-            return;
+            return ['imported' => 0, 'directories' => 0];
         }
-        $bezeichnung = trim($bezeichnung);
-        if ($bezeichnung === '') {
-            return;
-        }
-        $dir = $this->baseWarengruppe . '/' . $bezeichnung;
-        if (is_dir($dir)) {
-            $templates = $this->loadTemplates($dir);
-        } else {
-            $templates = $this->loadTemplates($this->baseWarengruppe . '/Standard');
-        }
-        if ($templates === []) {
-            return;
-        }
-        $values = $this->renderTemplates($templates, $context);
-        $this->updateRow($pdo, 'warengruppe', 'afs_wg_id', (string)$afsWgId, $values);
+        return $this->importDirectories($pdo, $this->baseWarengruppe, 'warengruppe_extra_data', 'warengruppenname');
     }
 
     private function isReadEnabled(): bool
@@ -116,37 +84,9 @@ final class FileDbTemplateApplier
     }
 
     /**
-     * @param array<string, string> $templates
-     * @param array<string, mixed> $context
-     * @return array<string, string>
-     */
-    private function renderTemplates(array $templates, array $context): array
-    {
-        $rendered = [];
-        foreach ($templates as $field => $template) {
-            $value = preg_replace_callback('/\\{\\{([A-Za-z0-9_]+)\\}\\}/', function (array $matches) use ($context): string {
-                $key = $matches[1] ?? '';
-                if ($key === '') {
-                    return '';
-                }
-                $val = $context[$key] ?? '';
-                if ($val === null) {
-                    return '';
-                }
-                return (string)$val;
-            }, $template);
-            if ($value === null) {
-                $value = $template;
-            }
-            $rendered[$field] = $value;
-        }
-        return $rendered;
-    }
-
-    /**
      * @param array<string, string> $values
      */
-    private function updateRow(PDO $pdo, string $table, string $keyColumn, string $keyValue, array $values): void
+    private function upsertRow(PDO $pdo, string $table, string $keyColumn, string $keyValue, array $values): void
     {
         if ($values === []) {
             return;
@@ -155,14 +95,19 @@ final class FileDbTemplateApplier
         $this->ensureColumns($pdo, $table, array_keys($values));
 
         $columns = array_keys($values);
-        $cacheKey = $table . '|' . implode(',', $columns) . '|' . $keyColumn;
+        $cacheKey = $table . '|' . implode(',', $columns) . '|' . $keyColumn . '|upsert';
         if (!isset($this->updateCache[$cacheKey])) {
-            $sets = [];
+            $insertColumns = [$this->quoteIdentifier($keyColumn)];
+            $insertParams = [':_key'];
+            $updates = [];
             foreach ($columns as $col) {
-                $sets[] = $this->quoteIdentifier($col) . ' = :' . $col;
+                $insertColumns[] = $this->quoteIdentifier($col);
+                $insertParams[] = ':' . $col;
+                $updates[] = $this->quoteIdentifier($col) . ' = excluded.' . $this->quoteIdentifier($col);
             }
-            $sql = 'UPDATE ' . $this->quoteIdentifier($table) . ' SET ' . implode(', ', $sets) .
-                ' WHERE ' . $this->quoteIdentifier($keyColumn) . ' = :_key';
+            $sql = 'INSERT INTO ' . $this->quoteIdentifier($table) .
+                ' (' . implode(', ', $insertColumns) . ') VALUES (' . implode(', ', $insertParams) . ')' .
+                ' ON CONFLICT(' . $this->quoteIdentifier($keyColumn) . ') DO UPDATE SET ' . implode(', ', $updates);
             $this->updateCache[$cacheKey] = $pdo->prepare($sql);
         }
 
@@ -172,6 +117,46 @@ final class FileDbTemplateApplier
         }
         $stmt->bindValue(':_key', $keyValue, PDO::PARAM_STR);
         $this->executeWithRetry($stmt);
+    }
+
+    /**
+     * @return array{imported:int,directories:int}
+     */
+    private function importDirectories(PDO $pdo, string $baseDir, string $table, string $keyColumn): array
+    {
+        if (!is_dir($baseDir)) {
+            return ['imported' => 0, 'directories' => 0];
+        }
+
+        $items = scandir($baseDir);
+        if (!is_array($items)) {
+            return ['imported' => 0, 'directories' => 0];
+        }
+
+        $directories = 0;
+        $imported = 0;
+        foreach ($items as $item) {
+            if ($item === '.' || $item === '..') {
+                continue;
+            }
+            $dir = $baseDir . '/' . $item;
+            if (!is_dir($dir)) {
+                continue;
+            }
+
+            $directories++;
+            $templates = $this->loadTemplates($dir);
+            if ($templates === []) {
+                continue;
+            }
+
+            $values = $templates;
+            $values['updated_at'] = $this->nowIso();
+            $this->upsertRow($pdo, $table, $keyColumn, $item, $values);
+            $imported++;
+        }
+
+        return ['imported' => $imported, 'directories' => $directories];
     }
 
     /**
@@ -218,6 +203,11 @@ final class FileDbTemplateApplier
                 usleep(150000);
             }
         }
+    }
+
+    private function nowIso(): string
+    {
+        return (new DateTimeImmutable('now', new DateTimeZone('UTC')))->format(DATE_ATOM);
     }
 
     private function quoteIdentifier(string $name): string

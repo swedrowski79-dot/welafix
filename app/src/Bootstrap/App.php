@@ -107,6 +107,10 @@ final class App
             (new ApiController($factory))->fileDbApply();
             return;
         }
+        if ($path === '/api/meta/fill') {
+            (new ApiController($factory))->fillMeta();
+            return;
+        }
 
         if ($path === '/api/test-mssql') {
             (new ApiController($factory))->testMssql();
@@ -129,6 +133,14 @@ final class App
         }
         if ($path === '/api/sqlite/clear') {
             (new SqliteBrowserController($factory))->clearTable();
+            return;
+        }
+        if ($path === '/api/sqlite/drop') {
+            (new SqliteBrowserController($factory))->dropTable();
+            return;
+        }
+        if ($path === '/api/sqlite/update-cell') {
+            (new SqliteBrowserController($factory))->updateCell();
             return;
         }
 

@@ -275,8 +275,8 @@ return [
       'primary_key' => ['link_id', 'link_type', 'language_code', 'store_id'],
       'mode' => 'upsert',
       'columns' => [
-        'url_md5'          => 'md5(artikel.seo_url)',
-        'url_text'         => 'artikel.seo_url',
+        'url_md5'          => 'default:md5(artikel.seo_url)',
+        'url_text'         => 'default:artikel.seo_url',
         'language_code'    => 'default:de',
         'link_type'        => '1',
         'link_id'          => 'lookup(xt_products, external_id, artikel.afs_artikel_id, products_id)',
@@ -294,8 +294,8 @@ return [
       'primary_key' => ['link_id', 'link_type', 'language_code', 'store_id'],
       'mode' => 'upsert',
       'columns' => [
-        'url_md5'          => 'md5(warengruppe.seo_url)',
-        'url_text'         => 'warengruppe.seo_url',
+        'url_md5'          => 'default:md5(warengruppe.seo_url)',
+        'url_text'         => 'default:warengruppe.seo_url',
         'language_code'    => 'default:de',
         'link_type'        => '2',
         'link_id'          => 'lookup(xt_categories, external_id, warengruppe.afs_wg_id, categories_id)',

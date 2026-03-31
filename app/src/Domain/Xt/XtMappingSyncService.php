@@ -327,6 +327,10 @@ final class XtMappingSyncService
                             $this->updateRow($pdo, $table, $values, $existingCols, $pkCols, $lookupPk, $autoCols, $columns);
                         }
                     } catch (\Throwable $e) {
+                        $this->logSqlError($table, $updateStmt?->queryString ?? 'updateRow', [
+                            'values' => $values,
+                            'pk' => $lookupPk,
+                        ], $e);
                         if ($table === 'xt_seo_url' && str_contains($e->getMessage(), 'url_md5')) {
                             $this->logUniqueConflict($table, ['url_md5'], $values, $pdo);
                             $this->logWarning('WARNING table=' . $table . ' reason=unique_update_failed error=' . $e->getMessage());
@@ -451,7 +455,8 @@ final class XtMappingSyncService
         if (!preg_match('/^[A-Za-z0-9_]+$/', $source)) {
             return [];
         }
-        $stmt = $pdo->query('SELECT * FROM ' . $this->quoteIdentifier($source));
+        $sql = $this->buildSourceSelectSql($source);
+        $stmt = $pdo->query($sql);
         return $stmt ?: [];
     }
 
@@ -465,12 +470,28 @@ final class XtMappingSyncService
         }
         $limit = max(1, $limit);
         $offset = max(0, $offset);
-        $sql = 'SELECT * FROM ' . $this->quoteIdentifier($source) . ' LIMIT :limit OFFSET :offset';
+        $sql = $this->buildSourceSelectSql($source) . ' LIMIT :limit OFFSET :offset';
         $stmt = $pdo->prepare($sql);
         $stmt->bindValue(':limit', $limit, PDO::PARAM_INT);
         $stmt->bindValue(':offset', $offset, PDO::PARAM_INT);
         $stmt->execute();
         return $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+    }
+
+    private function buildSourceSelectSql(string $source): string
+    {
+        $table = $this->quoteIdentifier($source);
+        if ($source === 'artikel') {
+            return 'SELECT s.*, m.meta_title AS meta_title, m.meta_description AS meta_description
+                    FROM ' . $table . ' s
+                    LEFT JOIN "Meta_Data_Artikel" m ON m.afs_artikel_id = s.afs_artikel_id';
+        }
+        if ($source === 'warengruppe') {
+            return 'SELECT s.*, m.meta_title AS meta_title, m.meta_description AS meta_description
+                    FROM ' . $table . ' s
+                    LEFT JOIN "Meta_Data_Waregruppen" m ON m.afs_wg_id = s.afs_wg_id';
+        }
+        return 'SELECT * FROM ' . $table;
     }
 
     private function loadBatchSize(PDO $pdo): int
@@ -521,7 +542,11 @@ final class XtMappingSyncService
             return '';
         }
         if (str_starts_with($expr, 'default:')) {
-            return $this->parseDefault(substr($expr, 8));
+            $raw = substr($expr, 8);
+            if ($this->isLiteralDefault($raw)) {
+                return $this->parseDefault($raw);
+            }
+            return $this->evalExpr($raw, $context, $table, $primaryKey, $values);
         }
         if (str_starts_with($expr, 'calc:')) {
             return $this->calcValue(substr($expr, 5));
@@ -606,6 +631,28 @@ final class XtMappingSyncService
         if (strtolower($raw) === 'true') return true;
         if (strtolower($raw) === 'false') return false;
         return $raw;
+    }
+
+    private function isLiteralDefault(string $raw): bool
+    {
+        $raw = trim($raw);
+        if ($raw === '') {
+            return true;
+        }
+        if (($raw[0] === '"' && str_ends_with($raw, '"')) || ($raw[0] === "'" && str_ends_with($raw, "'"))) {
+            return true;
+        }
+        if (is_numeric($raw)) {
+            return true;
+        }
+        $lower = strtolower($raw);
+        if ($lower === 'true' || $lower === 'false' || $lower === 'null') {
+            return true;
+        }
+        if (preg_match('/^[A-Za-z0-9_]+$/', $raw)) {
+            return true;
+        }
+        return false;
     }
 
     private function calcValue(string $name): mixed
@@ -911,7 +958,12 @@ final class XtMappingSyncService
         }
         $sql = 'UPDATE ' . $this->quoteIdentifier($table) . ' SET ' . implode(',', $sets) . ' WHERE ' . implode(' AND ', $where);
         $stmt = $pdo->prepare($sql);
-        $stmt->execute($params);
+        try {
+            $stmt->execute($params);
+        } catch (\Throwable $e) {
+            $this->logSqlError($table, $sql, $params, $e);
+            throw $e;
+        }
     }
 
     private function setChanged(PDO $pdo, string $table, array $pkCols, array $pkValues): void
@@ -1424,6 +1476,7 @@ final class XtMappingSyncService
         foreach ($columns as $col => $expr) {
             if (!isset($existingCols[strtolower($col)])) continue;
             if (strtolower((string)$expr) === 'auto') continue;
+            if ($this->isDefaultExpr((string)$expr)) continue;
             if (in_array($col, $pkCols, true)) continue;
             $sets[] = $this->quoteIdentifier($col) . ' = :' . $col;
         }
@@ -1475,6 +1528,18 @@ final class XtMappingSyncService
     {
         $path = $this->getLogsDir() . '/' . $filename;
         @file_put_contents($path, $line . PHP_EOL, FILE_APPEND);
+    }
+
+    private function logSqlError(string $table, string $sql, array $params, \Throwable $e): void
+    {
+        $entry = [
+            'ts' => date('c'),
+            'table' => $table,
+            'sql' => $sql,
+            'params' => $params,
+            'error' => $e->getMessage(),
+        ];
+        $this->appendLog('xt_sql_errors.log', json_encode($entry, JSON_UNESCAPED_UNICODE));
     }
 
     private function pickColumns(array $values, array $cols): array

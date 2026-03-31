@@ -179,11 +179,6 @@ final class ApiController
 
     public function fileDbApply(): void
     {
-        $limit = isset($_GET['limit']) ? (int)$_GET['limit'] : 50;
-        $limit = max(1, min(500, $limit));
-        $offset = isset($_GET['offset']) ? (int)$_GET['offset'] : 0;
-        $offset = max(0, $offset);
-
         $pdo = $this->factory->sqlite();
         $pdo->exec('PRAGMA busy_timeout = 5000');
         $applier = new FileDbTemplateApplier();
@@ -194,43 +189,47 @@ final class ApiController
         $wgStd = $base . '/Warengruppen/Standard';
         $artikelTemplates = $this->listTemplateFiles($artikelStd);
         $wgTemplates = $this->listTemplateFiles($wgStd);
-
-        $wgStmt = $pdo->prepare('SELECT * FROM warengruppe LIMIT :limit OFFSET :offset');
-        $wgStmt->bindValue(':limit', $limit, PDO::PARAM_INT);
-        $wgStmt->bindValue(':offset', $offset, PDO::PARAM_INT);
-        $wgStmt->execute();
-        $wgRows = $wgStmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
-        foreach ($wgRows as $row) {
-            $id = (int)($row['afs_wg_id'] ?? 0);
-            $name = (string)($row['name'] ?? '');
-            if ($id > 0 && $name !== '') {
-                $applier->applyWarengruppe($pdo, $id, $name, $row);
+        $pdo->beginTransaction();
+        try {
+            $pdo->exec('DELETE FROM artikel_extra_data');
+            $pdo->exec('DELETE FROM warengruppe_extra_data');
+            $artikelStats = $applier->importArtikelDirectories($pdo);
+            $warengruppeStats = $applier->importWarengruppeDirectories($pdo);
+            $pdo->commit();
+        } catch (\Throwable $e) {
+            if ($pdo->inTransaction()) {
+                $pdo->rollBack();
             }
-        }
-
-        $artStmt = $pdo->prepare('SELECT * FROM artikel LIMIT :limit OFFSET :offset');
-        $artStmt->bindValue(':limit', $limit, PDO::PARAM_INT);
-        $artStmt->bindValue(':offset', $offset, PDO::PARAM_INT);
-        $artStmt->execute();
-        $artRows = $artStmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
-        foreach ($artRows as $row) {
-            $nr = (string)($row['artikelnummer'] ?? '');
-            if ($nr !== '') {
-                $applier->applyArtikel($pdo, $nr, $row);
-            }
+            $this->jsonResponse([
+                'ok' => false,
+                'error' => $e->getMessage(),
+            ], 500);
+            return;
         }
 
         $this->jsonResponse([
             'ok' => true,
-            'limit' => $limit,
-            'offset' => $offset,
-            'warengruppe_count' => count($wgRows),
-            'artikel_count' => count($artRows),
             'filedb_mode' => $mode,
             'filedb_base' => $base,
             'artikel_standard' => ['path' => $artikelStd, 'templates' => $artikelTemplates],
             'warengruppe_standard' => ['path' => $wgStd, 'templates' => $wgTemplates],
+            'artikel' => $artikelStats,
+            'warengruppe' => $warengruppeStats,
         ]);
+    }
+
+    public function fillMeta(): void
+    {
+        try {
+            $service = new \Welafix\Domain\Meta\MetaFillService($this->factory);
+            $stats = $service->run();
+            $this->jsonResponse($stats);
+        } catch (\Throwable $e) {
+            $this->jsonResponse([
+                'ok' => false,
+                'error' => $e->getMessage(),
+            ], 500);
+        }
     }
 
     /**
