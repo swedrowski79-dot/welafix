@@ -1,0 +1,1 @@
+WARNING table=xt_products pk={"products_id":false} mapping=artikel.is_slave reason=missing_source_field
