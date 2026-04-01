@@ -25,6 +25,16 @@ final class Db
         return self::factory()->sqlite();
     }
 
+    public static function mysql(): PDO
+    {
+        return self::factory()->mysql();
+    }
+
+    public static function localDb(): PDO
+    {
+        return self::factory()->localDb();
+    }
+
     public static function guardMssql(PDO $pdo, string $component = ''): PDO
     {
         $driver = $pdo->getAttribute(PDO::ATTR_DRIVER_NAME);
@@ -51,7 +61,7 @@ final class Db
     public static function ensureMigrated(): void
     {
         $factory = self::factory();
-        $factory->ensureSqliteMigrated();
+        $factory->ensureLocalMigrated();
     }
 
     private static function factory(): ConnectionFactory

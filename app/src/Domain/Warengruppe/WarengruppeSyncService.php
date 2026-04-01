@@ -46,12 +46,13 @@ final class WarengruppeSyncService
         $mapping['select'] = $selectFields;
 
         $mssql = Db::guardMssql(Db::mssql(), __METHOD__);
-        $sqlite = Db::guardSqlite(Db::sqlite(), __METHOD__);
+        $sqlite = $this->factory->localDb();
         $mssqlRepo = new WarengruppeRepositoryMssql($mssql);
         $sqliteRepo = new WarengruppeRepositorySqlite($sqlite);
         $this->schemaSync->ensureSqliteColumnsMatchMssql($mssql, $sqlite, 'dbo.Warengruppe', 'warengruppe', $selectFields);
         $deltaOnly = $this->shouldUseSourceUpdateFilter($mapping, $sqlite, 'warengruppe');
         $afsQueue = new AfsUpdateQueue($sqlite);
+        $afsQueue->ensureTable();
 
         try {
             $rows = $mssqlRepo->fetchAllByMapping($mapping, $deltaOnly);
@@ -133,11 +134,13 @@ final class WarengruppeSyncService
             }
             $pdo->commit();
         } catch (\Throwable $e) {
-            $pdo->rollBack();
+            if ($pdo->inTransaction()) {
+                $pdo->rollBack();
+            }
             throw $e;
         }
 
-        $stats['paths_updated'] = $this->buildAndStorePathsAndSeo($this->factory->sqlite());
+        $stats['paths_updated'] = $this->buildAndStorePathsAndSeo($this->factory->localDb());
         return $stats;
     }
 
@@ -260,7 +263,9 @@ final class WarengruppeSyncService
             }
             $pdo->commit();
         } catch (\Throwable $e) {
-            $pdo->rollBack();
+            if ($pdo->inTransaction()) {
+                $pdo->rollBack();
+            }
             throw $e;
         }
         return $updated;
@@ -389,13 +394,15 @@ final class WarengruppeSyncService
      */
     private function loadExistingColumns(PDO $pdo, string $table): array
     {
-        $stmt = $pdo->query('PRAGMA table_info(' . $this->quoteIdentifier($table) . ')');
+        $stmt = $this->isMysql($pdo)
+            ? $pdo->query('DESCRIBE ' . $this->quoteIdentifier($table))
+            : $pdo->query('PRAGMA table_info(' . $this->quoteIdentifier($table) . ')');
         $rows = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
         $columns = [];
         foreach ($rows as $row) {
-            $name = (string)($row['name'] ?? '');
+            $name = (string)($row['name'] ?? $row['Field'] ?? '');
             if ($name !== '') {
-                $columns[$name] = true;
+                $columns[strtolower($name)] = true;
             }
         }
         return $columns;
@@ -496,7 +503,12 @@ final class WarengruppeSyncService
 
     private function quoteIdentifier(string $name): string
     {
-        return '"' . str_replace('"', '""', $name) . '"';
+        return '`' . str_replace('`', '``', $name) . '`';
+    }
+
+    private function isMysql(PDO $pdo): bool
+    {
+        return (string)$pdo->getAttribute(PDO::ATTR_DRIVER_NAME) === 'mysql';
     }
 
     private function log(string $message): void

@@ -1,14 +1,17 @@
 <?php
 declare(strict_types=1);
+/** @var array $data */
+$driver = isset($data['local_db_driver']) ? strtoupper((string)$data['local_db_driver']) : 'DB';
 ?>
 <div class="card">
-  <h2>SQLite Browser</h2>
+  <h2>Lokale DB Browser</h2>
   <div class="btn-row" style="align-items: center;">
     <label for="table-select">Tabelle auswählen</label>
     <select id="table-select"></select>
     <input id="search-input" type="text" placeholder="Suche" />
     <button class="btn" id="search-btn" type="button">Suchen</button>
     <span class="muted" id="loading-indicator" style="display:none;">Lade…</span>
+    <span class="muted">Treiber: <strong><?= htmlspecialchars($driver, ENT_QUOTES, 'UTF-8') ?></strong></span>
   </div>
   <div class="btn-row" style="align-items: center; margin-top: 10px;">
     <span class="muted">Total: <strong id="total-count">0</strong></span>

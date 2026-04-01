@@ -23,6 +23,26 @@ final class ArtikelRepositorySqlite
 
     public function ensureTable(): void
     {
+        if ($this->isMysql()) {
+            $sql = 'CREATE TABLE IF NOT EXISTS artikel (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                afs_artikel_id VARCHAR(255) UNIQUE,
+                artikelnummer VARCHAR(255),
+                warengruppe_id VARCHAR(255),
+                seo_url TEXT,
+                master_modell VARCHAR(255),
+                is_master TINYINT NULL,
+                is_deleted TINYINT DEFAULT 0,
+                row_hash TEXT,
+                last_seen_at VARCHAR(64),
+                last_synced_at VARCHAR(64),
+                changed TINYINT DEFAULT 0,
+                changed_fields LONGTEXT,
+                change_reason TEXT
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci';
+            $this->pdo->exec($sql);
+            return;
+        }
         $sql = 'CREATE TABLE IF NOT EXISTS artikel (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             afs_artikel_id TEXT UNIQUE,
@@ -70,6 +90,22 @@ final class ArtikelRepositorySqlite
     public function upsertArtikel(array $data, string $seenAtIso, array $extraFields, array $extraKeys, string $rowHash, array $diffColumns = []): array
     {
         $afsArtikelId = (string)$data['afs_artikel_id'];
+        $reserved = [
+            'afs_artikel_id',
+            'artikelnummer',
+            'warengruppe_id',
+            'is_deleted',
+            'row_hash',
+            'last_seen_at',
+            'last_synced_at',
+            'changed',
+            'changed_fields',
+            'change_reason',
+        ];
+        $extraKeys = array_values(array_filter(
+            $extraKeys,
+            static fn(string $key): bool => !in_array(strtolower($key), $reserved, true)
+        ));
         $existing = $this->findByAfsArtikelId($afsArtikelId, $diffColumns);
         $diff = $this->tracker->buildDiff($existing, $extraFields, $diffColumns);
 
@@ -211,7 +247,12 @@ final class ArtikelRepositorySqlite
 
     private function quoteIdentifier(string $name): string
     {
-        return '"' . str_replace('"', '""', $name) . '"';
+        return '`' . str_replace('`', '``', $name) . '`';
+    }
+
+    private function isMysql(): bool
+    {
+        return (string)$this->pdo->getAttribute(PDO::ATTR_DRIVER_NAME) === 'mysql';
     }
 
     /**

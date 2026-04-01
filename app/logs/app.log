@@ -1,69 +1,45 @@
-[2026-03-31T16:54:17+00:00] mssql_debug host=10.0.1.82 port=1435 db=AFS_2018 user=sa
-[2026-03-31T16:54:17+00:00] mssql_debug host=10.0.1.82 port=1435 db=AFS_2018 user=sa
-[2026-03-31T16:57:03+00:00] mssql_debug host=10.0.1.82 port=1435 db=AFS_2018 user=sa
-[2026-03-31T16:57:03+00:00] mssql_debug host=10.0.1.82 port=1435 db=AFS_2018 user=sa
-[2026-03-31T17:01:07+00:00] mssql_debug host=tcp:10.0.1.82 port=1435 db=AFS_2018 user=sa
-[2026-03-31T17:01:07+00:00] mssql_debug host=tcp:10.0.1.82 port=1435 db=AFS_2018 user=sa
-[2026-03-31T17:02:01+00:00] mssql_debug host=10.0.1.82 port=1435 db=AFS_2018 user=sa
-[2026-03-31T17:02:12+00:00] mssql_debug host=10.0.1.82 port=1435 db=AFS_2018 user=sa
-[2026-03-31T17:02:13+00:00] missing wg mapping: warengruppe_id=2 artikelnummer=GANI-080
-[2026-03-31T17:04:38+00:00] mssql_debug host=10.0.1.82 port=1435 db=AFS_2018 user=sa
-[2026-03-31T17:04:39+00:00] missing wg mapping: warengruppe_id=2 artikelnummer=GANI-080
-[2026-03-31T17:05:49+00:00] mssql_debug host=10.0.1.82 port=1435 db=AFS_2018 user=sa
-[2026-03-31T17:05:50+00:00] missing wg mapping: warengruppe_id=2 artikelnummer=GANI-080
-[2026-03-31T17:07:28+00:00] mssql_debug host=10.0.1.82 port=1435 db=AFS_2018 user=sa
-[2026-03-31T17:07:28+00:00] missing wg mapping: warengruppe_id=2 artikelnummer=GANI-080
-[2026-03-31T17:15:03+00:00] mssql_debug host=10.0.1.82 port=1435 db=AFS_2018 user=sa
-[2026-03-31T17:15:04+00:00] mssql_debug host=10.0.1.82 port=1435 db=AFS_2018 user=sa
-[2026-03-31T17:15:04+00:00] missing wg mapping: warengruppe_id=2 artikelnummer=GANI-080
-[2026-03-31T17:15:29+00:00] mssql_debug host=10.0.1.82 port=1435 db=AFS_2018 user=sa
-[2026-03-31T17:18:20+00:00] mssql_debug host=10.0.1.82 port=1435 db=AFS_2018 user=sa
-[2026-03-31T17:18:36+00:00] mssql_debug host=10.0.1.82 port=1435 db=AFS_2018 user=sa
-[2026-03-31T17:33:48+00:00] mssql_debug host=10.0.1.82 port=1435 db=AFS_2018 user=sa
-[2026-03-31T17:41:51+00:00] mssql_debug host=10.0.1.82 port=1435 db=AFS_2018 user=sa
-[2026-03-31T17:59:28+00:00] mssql_debug host=10.0.1.82 port=1435 db=AFS_2018 user=sa
-[2026-03-31T18:00:18+00:00] mssql_debug host=10.0.1.82 port=1435 db=AFS_2018 user=sa
-[2026-03-31T18:14:59+00:00] mssql_debug host=10.0.1.82 port=1435 db=AFS_2018 user=sa
-[2026-03-31T18:15:29+00:00] mssql_debug host=10.0.1.82 port=1435 db=AFS_2018 user=sa
-[2026-03-31T18:15:29+00:00] missing wg mapping: warengruppe_id=2 artikelnummer=GANI-080
-[2026-03-31T18:16:04+00:00] mssql_debug host=10.0.1.82 port=1435 db=AFS_2018 user=sa
-[2026-03-31T18:29:48+00:00] mssql_debug host=10.0.1.82 port=1435 db=AFS_2018 user=sa
-[2026-03-31T18:39:06+00:00] mssql_debug host=10.0.1.82 port=1435 db=AFS_2018 user=sa
-[2026-03-31T18:39:25+00:00] mssql_debug host=10.0.1.82 port=1435 db=AFS_2018 user=sa
-[2026-03-31T18:39:37+00:00] mssql_debug host=10.0.1.82 port=1435 db=AFS_2018 user=sa
-[2026-03-31T18:45:56+00:00] mssql_debug host=10.0.1.82 port=1435 db=AFS_2018 user=sa
-[2026-03-31T18:45:57+00:00] missing wg mapping: warengruppe_id=2 artikelnummer=GANI-080
-[2026-03-31T18:53:19+00:00] mssql_debug host=10.0.1.82 port=1435 db=AFS_2018 user=sa
-[2026-03-31T18:53:19+00:00] missing wg mapping: warengruppe_id=2 artikelnummer=GANI-080
-[2026-03-31T19:01:02+00:00] invalid_category_offline artikelnummer=SPDA-06 afs_artikel_id=2654
-[2026-03-31T19:01:02+00:00] invalid_category_offline artikelnummer=CLBZ-38 afs_artikel_id=2849
-[2026-03-31T19:01:02+00:00] invalid_category_offline artikelnummer=FLNZ-038 afs_artikel_id=2852
-[2026-03-31T19:01:02+00:00] invalid_category_offline artikelnummer=Mindermengenzuschlag afs_artikel_id=4843
-[2026-03-31T19:01:02+00:00] invalid_category_offline artikelnummer=WHS-02 afs_artikel_id=14998
-[2026-03-31T19:01:02+00:00] invalid_category_offline artikelnummer=P02-80-0010 afs_artikel_id=38595
-[2026-03-31T19:01:02+00:00] invalid_category_offline artikelnummer=PKBR-038 afs_artikel_id=47015
-[2026-03-31T19:01:02+00:00] invalid_category_offline artikelnummer=V-GR-1/8-6 afs_artikel_id=47264
-[2026-03-31T19:01:02+00:00] invalid_category_offline artikelnummer=SPLV-01-EX afs_artikel_id=48140
-[2026-03-31T19:01:02+00:00] invalid_category_offline artikelnummer=CLPT-038 afs_artikel_id=51615
-[2026-03-31T19:01:02+00:00] invalid_category_offline artikelnummer=CLPH-100 afs_artikel_id=51617
-[2026-03-31T19:01:02+00:00] invalid_category_offline artikelnummer=STBP-R-000 afs_artikel_id=56679
-[2026-03-31T19:01:02+00:00] invalid_category_offline artikelnummer=GAEA-000 afs_artikel_id=56902
-[2026-03-31T19:01:02+00:00] invalid_category_offline artikelnummer=CLPH-076 afs_artikel_id=59281
-[2026-03-31T19:01:02+00:00] invalid_category_offline artikelnummer=HOHO-03 afs_artikel_id=59282
-[2026-03-31T19:01:02+00:00] invalid_category_offline artikelnummer=HOTR-050 Schlauchverbinder afs_artikel_id=60040
-[2026-03-31T19:01:02+00:00] invalid_category_offline artikelnummer=S-BSBE-355-90 afs_artikel_id=60909
-[2026-03-31T19:01:02+00:00] invalid_category_offline artikelnummer=CLBR-038-050 afs_artikel_id=1212
-[2026-03-31T19:01:02+00:00] invalid_category_offline artikelnummer=SPDA-09 afs_artikel_id=1482
-[2026-03-31T19:01:02+00:00] invalid_category_offline artikelnummer=V-VE-1/8" afs_artikel_id=1502
-[2026-03-31T19:01:02+00:00] invalid_category_offline artikelnummer=SPLV-01 afs_artikel_id=1704
-[2026-03-31T19:01:02+00:00] invalid_category_offline artikelnummer=V-TS-6 afs_artikel_id=2413
-[2026-03-31T19:04:36+00:00] mssql_debug host=10.0.1.82 port=1435 db=AFS_2018 user=sa
-[2026-03-31T19:04:51+00:00] mssql_debug host=10.0.1.82 port=1435 db=AFS_2018 user=sa
-[2026-03-31T20:09:10+00:00] mssql_debug host=10.0.1.82 port=1435 db=AFS_2018 user=sa
-[2026-03-31T20:55:12+00:00] mssql_debug host=10.0.1.82 port=1435 db=AFS_2018 user=sa
-[2026-03-31T20:56:54+00:00] mssql_debug host=10.0.1.82 port=1435 db=AFS_2018 user=sa
-[2026-03-31T21:00:23+00:00] mssql_debug host=10.0.1.82 port=1435 db=AFS_2018 user=sa
-[2026-03-31T21:00:23+00:00] mssql_debug host=10.0.1.82 port=1435 db=AFS_2018 user=sa
-[2026-03-31T21:00:52+00:00] mssql_debug host=10.0.1.82 port=1435 db=AFS_2018 user=sa
-[2026-03-31T21:00:56+00:00] mssql_debug host=10.0.1.82 port=1435 db=AFS_2018 user=sa
-[2026-03-31T21:00:57+00:00] missing wg mapping: warengruppe_id=2 artikelnummer=GANI-080
+[2026-03-31T22:01:46+00:00] mssql_debug host=10.0.1.82 port=1435 db=AFS_2018 user=sa
+[2026-03-31T22:01:48+00:00] mssql_debug host=10.0.1.82 port=1435 db=AFS_2018 user=sa
+[2026-03-31T22:01:49+00:00] missing wg mapping: warengruppe_id=2 artikelnummer=GANI-080
+[2026-03-31T22:01:49+00:00] Artikel-Import-Fehler: SQLSTATE[42000]: Syntax error or access violation: 1110 Column 'artikelnummer' specified twice
+[2026-03-31T22:01:49+00:00] Artikel-Import-Fehler: SQLSTATE[42000]: Syntax error or access violation: 1110 Column 'artikelnummer' specified twice
+[2026-03-31T22:01:49+00:00] Artikel-Import-Fehler: SQLSTATE[42000]: Syntax error or access violation: 1110 Column 'artikelnummer' specified twice
+[2026-03-31T22:01:49+00:00] Artikel-Import-Fehler: SQLSTATE[42000]: Syntax error or access violation: 1110 Column 'artikelnummer' specified twice
+[2026-03-31T22:01:49+00:00] Artikel-Import-Fehler: SQLSTATE[42000]: Syntax error or access violation: 1110 Column 'artikelnummer' specified twice
+[2026-03-31T22:01:49+00:00] Artikel-Import-Fehler: SQLSTATE[42000]: Syntax error or access violation: 1110 Column 'artikelnummer' specified twice
+[2026-03-31T22:01:49+00:00] Artikel-Import-Fehler: SQLSTATE[42000]: Syntax error or access violation: 1110 Column 'artikelnummer' specified twice
+[2026-03-31T22:01:49+00:00] Artikel-Import-Fehler: SQLSTATE[42000]: Syntax error or access violation: 1110 Column 'artikelnummer' specified twice
+[2026-03-31T22:01:49+00:00] Artikel-Import-Fehler: SQLSTATE[42000]: Syntax error or access violation: 1110 Column 'artikelnummer' specified twice
+[2026-03-31T22:01:49+00:00] Artikel-Import-Fehler: SQLSTATE[42000]: Syntax error or access violation: 1110 Column 'artikelnummer' specified twice
+[2026-03-31T22:02:12+00:00] mssql_debug host=10.0.1.82 port=1435 db=AFS_2018 user=sa
+[2026-03-31T22:02:12+00:00] missing wg mapping: warengruppe_id=2 artikelnummer=GANI-080
+[2026-03-31T22:02:12+00:00] Artikel-Import-Fehler: SQLSTATE[42000]: Syntax error or access violation: 1110 Column 'artikelnummer' specified twice
+[2026-03-31T22:03:32+00:00] mssql_debug host=10.0.1.82 port=1435 db=AFS_2018 user=sa
+[2026-03-31T22:03:32+00:00] mssql_debug host=10.0.1.82 port=1435 db=AFS_2018 user=sa
+[2026-03-31T22:03:32+00:00] missing wg mapping: warengruppe_id=2 artikelnummer=GANI-080
+[2026-03-31T22:07:49+00:00] mssql_debug host=10.0.1.82 port=1435 db=AFS_2018 user=sa
+[2026-03-31T22:15:49+00:00] invalid_category_offline artikelnummer=GANI-220 afs_artikel_id=80
+[2026-03-31T22:15:49+00:00] invalid_category_offline artikelnummer=GANI-100 afs_artikel_id=72
+[2026-03-31T22:15:49+00:00] invalid_category_offline artikelnummer=GANI-120 afs_artikel_id=73
+[2026-03-31T22:15:49+00:00] invalid_category_offline artikelnummer=GANI-125 afs_artikel_id=74
+[2026-03-31T22:15:49+00:00] invalid_category_offline artikelnummer=GANI-140 afs_artikel_id=75
+[2026-03-31T22:15:49+00:00] invalid_category_offline artikelnummer=GANI-150 afs_artikel_id=76
+[2026-03-31T22:15:49+00:00] invalid_category_offline artikelnummer=GANI-160 afs_artikel_id=77
+[2026-03-31T22:15:49+00:00] invalid_category_offline artikelnummer=GANI-180 afs_artikel_id=78
+[2026-03-31T22:15:49+00:00] invalid_category_offline artikelnummer=GANI-200 afs_artikel_id=79
+[2026-03-31T22:17:11+00:00] mssql_debug host=10.0.1.82 port=1435 db=AFS_2018 user=sa
+[2026-03-31T22:17:39+00:00] mssql_debug host=10.0.1.82 port=1435 db=AFS_2018 user=sa
+[2026-03-31T22:17:42+00:00] invalid_category_offline artikelnummer=GANI-220 afs_artikel_id=80
+[2026-03-31T22:17:42+00:00] invalid_category_offline artikelnummer=GANI-100 afs_artikel_id=72
+[2026-03-31T22:17:42+00:00] invalid_category_offline artikelnummer=GANI-120 afs_artikel_id=73
+[2026-03-31T22:17:42+00:00] invalid_category_offline artikelnummer=GANI-125 afs_artikel_id=74
+[2026-03-31T22:17:42+00:00] invalid_category_offline artikelnummer=GANI-140 afs_artikel_id=75
+[2026-03-31T22:17:42+00:00] invalid_category_offline artikelnummer=GANI-150 afs_artikel_id=76
+[2026-03-31T22:17:42+00:00] invalid_category_offline artikelnummer=GANI-160 afs_artikel_id=77
+[2026-03-31T22:17:42+00:00] invalid_category_offline artikelnummer=GANI-180 afs_artikel_id=78
+[2026-03-31T22:17:42+00:00] invalid_category_offline artikelnummer=GANI-200 afs_artikel_id=79
+[2026-03-31T22:19:36+00:00] mssql_debug host=10.0.1.82 port=1435 db=AFS_2018 user=sa
+[2026-04-01T00:04:55+00:00] mssql_debug host=10.0.1.82 port=1435 db=AFS_2018 user=sa
+[2026-04-01T00:42:38+00:00] optional_index_failed table=xt_seo_url index=idx_xt_seo_url_link error=SQLSTATE[HY000]: General error: 1025 Error on rename of './welafix/xt_seo_url' to './welafix/#sql-backup-1-64' (errno: 194 "Tablespace is missing for a table")
+[2026-04-01T00:42:38+00:00] optional_index_failed table=xt_seo_url index=idx_xt_seo_url_link error=SQLSTATE[HY000]: General error: 1025 Error on rename of './welafix/xt_seo_url' to './welafix/#sql-backup-1-63' (errno: 194 "Tablespace is missing for a table")
+[2026-04-01T00:43:02+00:00] optional_index_failed table=xt_seo_url index=idx_xt_seo_url_link error=SQLSTATE[HY000]: General error: 1025 Error on rename of './welafix/xt_seo_url' to './welafix/#sql-backup-1-67' (errno: 194 "Tablespace is missing for a table")

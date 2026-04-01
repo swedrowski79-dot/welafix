@@ -22,6 +22,11 @@ final class AttributesBuilder
         $this->pdo = $pdo;
     }
 
+    private function isMysql(): bool
+    {
+        return (string)$this->pdo->getAttribute(PDO::ATTR_DRIVER_NAME) === 'mysql';
+    }
+
     public function ingestRow(array $row): void
     {
         $this->ingestRowWithAssignments($row);
@@ -74,8 +79,9 @@ final class AttributesBuilder
         }
 
         $stmt = $this->pdo->prepare(
-            'INSERT OR IGNORE INTO attributes (attributes_parent, attributes_model, changed)
-             VALUES (0, :model, 1)'
+            $this->isMysql()
+                ? 'INSERT IGNORE INTO attributes (attributes_parent, attributes_model, changed) VALUES (0, :model, 1)'
+                : 'INSERT OR IGNORE INTO attributes (attributes_parent, attributes_model, changed) VALUES (0, :model, 1)'
         );
         $stmt->execute([':model' => $name]);
 
@@ -94,8 +100,9 @@ final class AttributesBuilder
         }
 
         $stmt = $this->pdo->prepare(
-            'INSERT OR IGNORE INTO attributes (attributes_parent, attributes_model, changed)
-             VALUES (:parent, :model, 1)'
+            $this->isMysql()
+                ? 'INSERT IGNORE INTO attributes (attributes_parent, attributes_model, changed) VALUES (:parent, :model, 1)'
+                : 'INSERT OR IGNORE INTO attributes (attributes_parent, attributes_model, changed) VALUES (:parent, :model, 1)'
         );
         $stmt->execute([':parent' => $parentId, ':model' => $value]);
 

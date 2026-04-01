@@ -77,7 +77,7 @@ declare(strict_types=1);
       <h3>Links</h3>
       <div class="btn-row">
         <a class="btn" href="/dashboard">Dashboard</a>
-        <a class="btn" href="/dashboard/sqlite">SQLite Browser</a>
+        <a class="btn" href="/dashboard/sqlite">Lokale DB Browser</a>
         <a class="btn" href="/test_mssql.php">MSSQL Verbindungstest</a>
         <a class="btn" href="/health">Health JSON</a>
       </div>

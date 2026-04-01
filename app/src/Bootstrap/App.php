@@ -182,6 +182,10 @@ final class App
             (new ApiController($factory))->xtImportTable();
             return;
         }
+        if ($path === '/api/local-db/reset') {
+            (new ApiController($factory))->localDbReset();
+            return;
+        }
         if ($path === '/sync/xt') {
             header('Content-Type: application/json');
             http_response_code(410);

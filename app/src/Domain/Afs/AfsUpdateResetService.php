@@ -16,7 +16,7 @@ final class AfsUpdateResetService
      */
     public function run(): array
     {
-        $sqlite = Db::guardSqlite($this->factory->sqlite(), __METHOD__ . ':sqlite');
+        $sqlite = $this->factory->localDb();
         $mssql = Db::guardMssql($this->factory->mssql(), __METHOD__ . ':mssql');
         $queue = new AfsUpdateQueue($sqlite);
         $grouped = $queue->allGrouped();

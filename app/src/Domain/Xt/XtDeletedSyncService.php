@@ -17,7 +17,7 @@ final class XtDeletedSyncService
      */
     public function prepareDelta(): array
     {
-        $pdo = $this->factory->sqlite();
+        $pdo = $this->factory->localDb();
         $productIds = $this->lookupXtIds($pdo, 'xt_products', 'products_id', 'external_id', 'SELECT afs_artikel_id FROM artikel WHERE changed = 1');
         $relationProductIds = $this->lookupXtIds($pdo, 'xt_products', 'products_id', 'external_id', 'SELECT afs_artikel_id FROM artikel_warengruppe WHERE changed = 1');
         $attributeProductIds = $this->lookupXtIds($pdo, 'xt_products', 'products_id', 'external_id', 'SELECT afs_artikel_id FROM artikel_attribute_map WHERE changed = 1');
@@ -38,7 +38,7 @@ final class XtDeletedSyncService
      */
     public function cleanupDeleted(): array
     {
-        $pdo = $this->factory->sqlite();
+        $pdo = $this->factory->localDb();
         $deletedProductIds = $this->lookupXtIds($pdo, 'xt_products', 'products_id', 'external_id', 'SELECT afs_artikel_id FROM artikel WHERE COALESCE(is_deleted,0) = 1');
         $deletedCategoryIds = $this->lookupXtIds($pdo, 'xt_categories', 'categories_id', 'external_id', 'SELECT afs_wg_id FROM warengruppe WHERE COALESCE(is_deleted,0) = 1');
         $deletedMediaIds = $this->lookupXtIds($pdo, 'xt_media', 'id', 'external_id', 'SELECT id FROM media WHERE COALESCE(is_deleted,0) = 1');
@@ -62,18 +62,21 @@ final class XtDeletedSyncService
      */
     private function lookupXtIds(PDO $pdo, string $xtTable, string $xtIdColumn, string $xtExternalColumn, string $sourceSql): array
     {
+        if (!$this->tableExists($pdo, $xtTable)) {
+            return [];
+        }
         $sql = 'SELECT x.' . $this->quoteIdentifier($xtIdColumn) . ' AS id
                 FROM ' . $this->quoteIdentifier($xtTable) . ' x
-                JOIN (' . $sourceSql . ') s ON CAST(s.' . $this->quoteIdentifier('afs_artikel_id') . ' AS TEXT) = CAST(x.' . $this->quoteIdentifier($xtExternalColumn) . ' AS TEXT)';
+                JOIN (' . $sourceSql . ') s ON CAST(s.' . $this->quoteIdentifier('afs_artikel_id') . ' AS CHAR) = CAST(x.' . $this->quoteIdentifier($xtExternalColumn) . ' AS CHAR)';
         if (str_contains($sourceSql, 'afs_wg_id')) {
             $sql = 'SELECT x.' . $this->quoteIdentifier($xtIdColumn) . ' AS id
                     FROM ' . $this->quoteIdentifier($xtTable) . ' x
-                    JOIN (' . $sourceSql . ') s ON CAST(s.' . $this->quoteIdentifier('afs_wg_id') . ' AS TEXT) = CAST(x.' . $this->quoteIdentifier($xtExternalColumn) . ' AS TEXT)';
+                    JOIN (' . $sourceSql . ') s ON CAST(s.' . $this->quoteIdentifier('afs_wg_id') . ' AS CHAR) = CAST(x.' . $this->quoteIdentifier($xtExternalColumn) . ' AS CHAR)';
         }
         if (preg_match('/SELECT id FROM media/', $sourceSql)) {
             $sql = 'SELECT x.' . $this->quoteIdentifier($xtIdColumn) . ' AS id
                     FROM ' . $this->quoteIdentifier($xtTable) . ' x
-                    JOIN (' . $sourceSql . ') s ON CAST(s.id AS TEXT) = CAST(x.' . $this->quoteIdentifier($xtExternalColumn) . ' AS TEXT)';
+                    JOIN (' . $sourceSql . ') s ON CAST(s.id AS CHAR) = CAST(x.' . $this->quoteIdentifier($xtExternalColumn) . ' AS CHAR)';
         }
         $stmt = $pdo->query($sql);
         $rows = $stmt ? $stmt->fetchAll(PDO::FETCH_ASSOC) : [];
@@ -85,7 +88,7 @@ final class XtDeletedSyncService
      */
     private function deleteByIds(PDO $pdo, string $table, string $column, array $ids): int
     {
-        if ($ids === []) {
+        if ($ids === [] || !$this->tableExists($pdo, $table)) {
             return 0;
         }
         $total = 0;
@@ -104,7 +107,7 @@ final class XtDeletedSyncService
      */
     private function disableByIds(PDO $pdo, string $table, string $idColumn, string $statusColumn, array $ids): int
     {
-        if ($ids === []) {
+        if ($ids === [] || !$this->tableExists($pdo, $table)) {
             return 0;
         }
         $total = 0;
@@ -125,7 +128,7 @@ final class XtDeletedSyncService
      */
     private function deleteSeoByIds(PDO $pdo, int $linkType, array $linkIds): int
     {
-        if ($linkIds === []) {
+        if ($linkIds === [] || !$this->tableExists($pdo, 'xt_seo_url')) {
             return 0;
         }
         $total = 0;
@@ -141,7 +144,18 @@ final class XtDeletedSyncService
 
     private function quoteIdentifier(string $name): string
     {
-        return '"' . str_replace('"', '""', $name) . '"';
+        return '`' . str_replace('`', '``', $name) . '`';
+    }
+
+    private function tableExists(PDO $pdo, string $table): bool
+    {
+        if ((string)$pdo->getAttribute(PDO::ATTR_DRIVER_NAME) === 'mysql') {
+            $stmt = $pdo->prepare('SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = :table');
+            $stmt->execute([':table' => $table]);
+            return (int)$stmt->fetchColumn() > 0;
+        }
+        $stmt = $pdo->query('SELECT name FROM sqlite_master WHERE type = "table" AND name = ' . $pdo->quote($table));
+        return (bool)($stmt ? $stmt->fetchColumn() : false);
     }
 
     /**
@@ -149,36 +163,69 @@ final class XtDeletedSyncService
      */
     private function offlineInvalidCategoryProducts(PDO $pdo): array
     {
-        $rows = $pdo->query(
-            'SELECT DISTINCT p.products_id, x.external_id AS afs_artikel_id, a.artikelnummer
-             FROM xt_products_to_categories p
-             JOIN xt_products x ON x.products_id = p.products_id
-             LEFT JOIN artikel a ON a.afs_artikel_id = x.external_id
-             WHERE p.categories_id IS NULL OR CAST(p.categories_id AS TEXT) = \'\''
-        )?->fetchAll(PDO::FETCH_ASSOC) ?: [];
-
-        if ($rows === []) {
+        if (!$this->tableExists($pdo, 'xt_products_to_categories') || !$this->tableExists($pdo, 'xt_products')) {
             return [
                 'invalid_category_products_offlined' => 0,
                 'invalid_products_to_categories_deleted' => 0,
             ];
         }
+        $rows = $pdo->query(
+            'SELECT DISTINCT p.products_id, x.external_id AS afs_artikel_id, a.artikelnummer
+             FROM xt_products_to_categories p
+             JOIN xt_products x ON x.products_id = p.products_id
+             LEFT JOIN artikel a ON a.afs_artikel_id = x.external_id
+             WHERE p.categories_id IS NULL OR CAST(p.categories_id AS CHAR) = \'\''
+        )?->fetchAll(PDO::FETCH_ASSOC) ?: [];
+        if ($rows !== []) {
+            $rows = array_values(array_filter($rows, static function (array $row): bool {
+                return trim((string)($row['afs_artikel_id'] ?? '')) !== '';
+            }));
+        }
+
+        if ($rows === []) {
+            $stmt = $pdo->prepare('DELETE FROM xt_products_to_categories WHERE categories_id IS NULL OR CAST(categories_id AS CHAR) = \'\'');
+            $stmt->execute();
+            return [
+                'invalid_category_products_offlined' => 0,
+                'invalid_products_to_categories_deleted' => $stmt->rowCount(),
+            ];
+        }
+
+        $articleIds = array_values(array_filter(array_map(static fn(array $row): string => trim((string)($row['afs_artikel_id'] ?? '')), $rows)));
+        $slaveLookup = [];
+        if ($articleIds !== [] && $this->tableExists($pdo, 'artikel')) {
+            foreach (array_chunk($articleIds, 500) as $chunk) {
+                $placeholders = implode(',', array_fill(0, count($chunk), '?'));
+                $stmt = $pdo->prepare(
+                    'SELECT afs_artikel_id, master_modell
+                     FROM artikel
+                     WHERE afs_artikel_id IN (' . $placeholders . ')'
+                );
+                $stmt->execute($chunk);
+                foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) ?: [] as $articleRow) {
+                    $slaveLookup[(string)($articleRow['afs_artikel_id'] ?? '')] = trim((string)($articleRow['master_modell'] ?? '')) !== '';
+                }
+            }
+        }
 
         $productIds = [];
         foreach ($rows as $row) {
+            $afsArtikelId = trim((string)($row['afs_artikel_id'] ?? ''));
+            if (($slaveLookup[$afsArtikelId] ?? false) === true) {
+                continue;
+            }
             $id = trim((string)($row['products_id'] ?? ''));
             if ($id !== '') {
                 $productIds[] = $id;
             }
             $artikelnummer = trim((string)($row['artikelnummer'] ?? ''));
-            $afsArtikelId = trim((string)($row['afs_artikel_id'] ?? ''));
             $this->logInvalidCategoryArticle($artikelnummer, $afsArtikelId);
         }
         $productIds = array_values(array_unique($productIds));
 
         $offlined = $this->disableByIds($pdo, 'xt_products', 'products_id', 'products_status', $productIds);
         $deleted = 0;
-        $stmt = $pdo->prepare('DELETE FROM xt_products_to_categories WHERE categories_id IS NULL OR CAST(categories_id AS TEXT) = \'\'');
+        $stmt = $pdo->prepare('DELETE FROM xt_products_to_categories WHERE categories_id IS NULL OR CAST(categories_id AS CHAR) = \'\'');
         $stmt->execute();
         $deleted += $stmt->rowCount();
 

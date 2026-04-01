@@ -10,6 +10,7 @@ use RuntimeException;
 use Welafix\Config\MappingService;
 use Welafix\Database\ConnectionFactory;
 use Welafix\Database\Db;
+use Welafix\Domain\Admin\LocalDbAdminService;
 use Welafix\Domain\Artikel\ArtikelSyncService;
 use Welafix\Domain\Document\DocumentRepositorySqlite;
 use Welafix\Domain\FileDb\FileDbTemplateApplier;
@@ -56,27 +57,41 @@ final class ApiController
 
     public function testSqlite(): void
     {
-        $path = (string)env('SQLITE_PATH', '');
+        $driver = $this->factory->localDriver();
 
         try {
-            if ($path === '') {
-                throw new RuntimeException('SQLITE_PATH ist nicht gesetzt.');
-            }
-            if (!file_exists($path)) {
-                throw new RuntimeException('SQLite DB nicht gefunden.');
-            }
-            if (!is_readable($path)) {
-                throw new RuntimeException('SQLite DB ist nicht lesbar.');
-            }
-
-            $pdo = Db::guardSqlite(Db::sqlite(), __METHOD__);
+            $pdo = $this->factory->localDb();
             $pdo->query('SELECT 1');
 
+            if ($driver === 'sqlite') {
+                $path = (string)env('SQLITE_PATH', '');
+                if ($path === '') {
+                    throw new RuntimeException('SQLITE_PATH ist nicht gesetzt.');
+                }
+                if (!file_exists($path)) {
+                    throw new RuntimeException('SQLite DB nicht gefunden.');
+                }
+                if (!is_readable($path)) {
+                    throw new RuntimeException('SQLite DB ist nicht lesbar.');
+                }
+                $this->jsonResponse([
+                    'ok' => true,
+                    'driver' => 'sqlite',
+                    'path' => $path,
+                    'readable' => true,
+                    'writable' => is_writable($path),
+                ]);
+                return;
+            }
+
+            $stmt = $pdo->query('SELECT DATABASE() AS database_name');
+            $row = $stmt ? ($stmt->fetch(PDO::FETCH_ASSOC) ?: []) : [];
             $this->jsonResponse([
                 'ok' => true,
-                'path' => $path,
-                'readable' => true,
-                'writable' => is_writable($path),
+                'driver' => $driver,
+                'host' => (string)env('LOCAL_DB_HOST', ''),
+                'port' => (string)env('LOCAL_DB_PORT', ''),
+                'database' => (string)($row['database_name'] ?? env('LOCAL_DB_NAME', '')),
             ]);
         } catch (\Throwable $e) {
             $this->jsonResponse([
@@ -474,6 +489,26 @@ final class ApiController
             $this->jsonResponse($stats);
         } catch (\Throwable $e) {
             $this->jsonResponse(['ok' => false, 'error' => $e->getMessage()], 500);
+        }
+    }
+
+    public function localDbReset(): void
+    {
+        $method = strtoupper((string)($_SERVER['REQUEST_METHOD'] ?? 'GET'));
+        if ($method !== 'POST') {
+            $this->jsonResponse(['ok' => false, 'error' => 'POST erforderlich'], 405);
+            return;
+        }
+
+        try {
+            $service = new LocalDbAdminService($this->factory);
+            $stats = $service->resetAndRecreate();
+            $this->jsonResponse($stats);
+        } catch (\Throwable $e) {
+            $this->jsonResponse([
+                'ok' => false,
+                'error' => $e->getMessage(),
+            ], 500);
         }
     }
 

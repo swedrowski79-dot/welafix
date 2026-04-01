@@ -16,9 +16,9 @@ $path = is_string($path) ? $path : '';
       <a class="btn" href="/dashboard">Zum Dashboard</a>
     </div>
     <div class="card">
-      <strong>SQLite Browser</strong><br>
+      <strong>Lokale DB Browser</strong><br>
       <span class="muted">Daten prüfen &amp; suchen</span><br><br>
-      <a class="btn" href="/dashboard/sqlite">SQLite öffnen</a>
+      <a class="btn" href="/dashboard/sqlite">DB öffnen</a>
     </div>
   </div>
 </div>

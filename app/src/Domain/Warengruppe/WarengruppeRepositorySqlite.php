@@ -43,7 +43,21 @@ final class WarengruppeRepositorySqlite
     {
         $existing = $this->findById($afsWgId);
         $parentIdNormalized = $this->normalizeParentId($parentId);
-        $extraKeys = array_keys($extraFields);
+        $reserved = [
+            'afs_wg_id',
+            'name',
+            'parent_id',
+            'is_deleted',
+            'last_seen_at',
+            'last_synced_at',
+            'changed',
+            'changed_fields',
+            'change_reason',
+        ];
+        $extraKeys = array_values(array_filter(
+            array_keys($extraFields),
+            static fn(string $key): bool => !in_array(strtolower($key), $reserved, true)
+        ));
         $diff = $this->tracker->buildDiff($existing, $extraFields, $diffColumns);
 
         if ($existing === null) {
@@ -198,7 +212,7 @@ final class WarengruppeRepositorySqlite
 
     private function quoteIdentifier(string $name): string
     {
-        return '"' . str_replace('"', '""', $name) . '"';
+        return '`' . str_replace('`', '``', $name) . '`';
     }
 
     /**
@@ -209,11 +223,13 @@ final class WarengruppeRepositorySqlite
         if ($this->columnCache !== null) {
             return $this->columnCache;
         }
-        $stmt = $this->pdo->query('PRAGMA table_info(warengruppe)');
+        $stmt = $this->isMysql()
+            ? $this->pdo->query('DESCRIBE ' . $this->quoteIdentifier('warengruppe'))
+            : $this->pdo->query('PRAGMA table_info(warengruppe)');
         $rows = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
         $cols = [];
         foreach ($rows as $row) {
-            $name = (string)($row['name'] ?? '');
+            $name = (string)($row['name'] ?? $row['Field'] ?? '');
             if ($name !== '') {
                 $cols[] = $name;
             }
@@ -223,6 +239,11 @@ final class WarengruppeRepositorySqlite
         }
         $this->columnCache = $cols;
         return $cols;
+    }
+
+    private function isMysql(): bool
+    {
+        return (string)$this->pdo->getAttribute(PDO::ATTR_DRIVER_NAME) === 'mysql';
     }
 
     /**

@@ -94,11 +94,15 @@ final class SchemaSyncService
      */
     private function fetchSqliteColumns(PDO $sqlite, string $sqliteTable): array
     {
-        $stmt = $sqlite->query('PRAGMA table_info(' . $this->quoteIdentifier($sqliteTable) . ')');
+        if ((string)$sqlite->getAttribute(PDO::ATTR_DRIVER_NAME) === 'mysql') {
+            $stmt = $sqlite->query('DESCRIBE ' . $this->quoteIdentifier($sqliteTable));
+        } else {
+            $stmt = $sqlite->query('PRAGMA table_info(' . $this->quoteIdentifier($sqliteTable) . ')');
+        }
         $rows = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
         $cols = [];
         foreach ($rows as $row) {
-            $name = (string)($row['name'] ?? '');
+            $name = (string)($row['name'] ?? $row['Field'] ?? '');
             if ($name !== '') {
                 $cols[] = $name;
             }
@@ -123,6 +127,17 @@ final class SchemaSyncService
 
     private function ensureChangeLog(PDO $sqlite): void
     {
+        if ((string)$sqlite->getAttribute(PDO::ATTR_DRIVER_NAME) === 'mysql') {
+            $sqlite->exec(
+                'CREATE TABLE IF NOT EXISTS app_schema_changes (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    table_name VARCHAR(255) NOT NULL,
+                    column_name VARCHAR(255) NOT NULL,
+                    added_at VARCHAR(64) NOT NULL
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci'
+            );
+            return;
+        }
         $sqlite->exec(
             'CREATE TABLE IF NOT EXISTS app_schema_changes (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -135,6 +150,6 @@ final class SchemaSyncService
 
     private function quoteIdentifier(string $name): string
     {
-        return '"' . str_replace('"', '""', $name) . '"';
+        return '`' . str_replace('`', '``', $name) . '`';
     }
 }

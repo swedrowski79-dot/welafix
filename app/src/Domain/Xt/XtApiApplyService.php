@@ -21,7 +21,7 @@ final class XtApiApplyService
      */
     public function run(string $mappingName = 'welafix_xt'): array
     {
-        $pdo = Db::guardSqlite($this->factory->sqlite(), __METHOD__);
+        $pdo = $this->factory->localDb();
         $this->repairLocalMediaState($pdo);
         $orphans = $this->collectOrphanRelationIds($pdo);
         $mapping = $this->loadMapping($mappingName);
@@ -45,6 +45,13 @@ final class XtApiApplyService
             'ok' => true,
             'delete_ops' => [],
             'upserts' => [],
+            'file_uploads' => [
+                'ok' => true,
+                'received' => 0,
+                'written' => 0,
+                'skipped' => 0,
+                'errors' => [],
+            ],
             'local_reset' => [],
             'local_cleanup' => [],
         ];
@@ -122,6 +129,8 @@ final class XtApiApplyService
             $stats['local_reset'][$table] = $stmt->rowCount();
         }
 
+        $stats['file_uploads'] = $this->uploadChangedFiles($pdo);
+
         return $stats;
     }
 
@@ -164,25 +173,25 @@ final class XtApiApplyService
     private function repairLocalMediaState(PDO $pdo): void
     {
         if ($this->tableHasColumn($pdo, 'xt_media', 'id') && $this->tableHasColumn($pdo, 'xt_media', 'external_id')) {
-            $maxId = (int)($pdo->query("SELECT COALESCE(MAX(CAST(id AS INTEGER)), 0) FROM xt_media WHERE id IS NOT NULL AND CAST(id AS TEXT) <> ''")?->fetchColumn() ?? 0);
-            $rows = $pdo->query("SELECT rowid FROM xt_media WHERE (id IS NULL OR CAST(id AS TEXT) = '') AND external_id IS NOT NULL AND CAST(external_id AS TEXT) <> '' ORDER BY rowid ASC")?->fetchAll(PDO::FETCH_COLUMN) ?: [];
+            $maxId = (int)($pdo->query("SELECT COALESCE(MAX(CAST(id AS SIGNED)), 0) FROM xt_media WHERE id IS NOT NULL AND CAST(id AS CHAR) <> ''")?->fetchColumn() ?? 0);
+            $rows = $pdo->query("SELECT external_id FROM xt_media WHERE (id IS NULL OR CAST(id AS CHAR) = '') AND external_id IS NOT NULL AND CAST(external_id AS CHAR) <> '' ORDER BY external_id ASC")?->fetchAll(PDO::FETCH_COLUMN) ?: [];
             if ($rows !== []) {
-                $stmt = $pdo->prepare('UPDATE xt_media SET id = :id, changed = 1 WHERE rowid = :rowid');
-                foreach ($rows as $rowid) {
+                $stmt = $pdo->prepare('UPDATE xt_media SET id = :id, changed = 1 WHERE external_id = :external_id AND (id IS NULL OR CAST(id AS CHAR) = \'\')');
+                foreach ($rows as $externalId) {
                     $maxId++;
                     $stmt->execute([
                         ':id' => $maxId,
-                        ':rowid' => $rowid,
+                        ':external_id' => $externalId,
                     ]);
                 }
             }
         }
 
         if ($this->tableHasColumn($pdo, 'xt_media_link', 'type')) {
-            $pdo->exec("UPDATE xt_media_link SET type = 'images', changed = 1 WHERE type IS NULL OR CAST(type AS TEXT) = ''");
+            $pdo->exec("UPDATE xt_media_link SET type = 'images', changed = 1 WHERE type IS NULL OR CAST(type AS CHAR) = ''");
         }
         if ($this->tableHasColumn($pdo, 'xt_media_link', 'class')) {
-            $pdo->exec("UPDATE xt_media_link SET class = 'product', changed = 1 WHERE class IS NULL OR CAST(class AS TEXT) = ''");
+            $pdo->exec("UPDATE xt_media_link SET class = 'product', changed = 1 WHERE class IS NULL OR CAST(class AS CHAR) = ''");
         }
         if (
             $this->tableHasColumn($pdo, 'xt_media_link', 'm_id')
@@ -202,15 +211,15 @@ final class XtApiApplyService
                    SELECT xm.id
                    FROM xt_products xp
                    JOIN artikel_media_map am
-                     ON CAST(am.afs_artikel_id AS TEXT) = CAST(xp.external_id AS TEXT)
-                    AND CAST(am.position AS TEXT) = CAST(xt_media_link.sort_order AS TEXT)
+                     ON CAST(am.afs_artikel_id AS CHAR) = CAST(xp.external_id AS CHAR)
+                    AND CAST(am.position AS CHAR) = CAST(xt_media_link.sort_order AS CHAR)
                    JOIN xt_media xm
-                     ON CAST(xm.external_id AS TEXT) = CAST(am.media_id AS TEXT)
-                   WHERE CAST(xp.products_id AS TEXT) = CAST(xt_media_link.link_id AS TEXT)
+                     ON CAST(xm.external_id AS CHAR) = CAST(am.media_id AS CHAR)
+                   WHERE CAST(xp.products_id AS CHAR) = CAST(xt_media_link.link_id AS CHAR)
                    LIMIT 1
                  ),
                  changed = 1
-                 WHERE m_id IS NULL OR CAST(m_id AS TEXT) = ''"
+                 WHERE m_id IS NULL OR CAST(m_id AS CHAR) = ''"
             );
         }
     }
@@ -272,7 +281,7 @@ final class XtApiApplyService
                 'DELETE FROM xt_plg_products_to_attributes
                  WHERE NOT EXISTS (
                    SELECT 1 FROM xt_products p
-                   WHERE CAST(p.products_id AS TEXT) = CAST(xt_plg_products_to_attributes.products_id AS TEXT)
+                   WHERE CAST(p.products_id AS CHAR) = CAST(xt_plg_products_to_attributes.products_id AS CHAR)
                  )'
             );
             $stmt->execute();
@@ -284,7 +293,7 @@ final class XtApiApplyService
                 'DELETE FROM xt_plg_products_to_attributes
                  WHERE NOT EXISTS (
                    SELECT 1 FROM xt_plg_products_attributes a
-                   WHERE CAST(a.attributes_id AS TEXT) = CAST(xt_plg_products_to_attributes.attributes_id AS TEXT)
+                   WHERE CAST(a.attributes_id AS CHAR) = CAST(xt_plg_products_to_attributes.attributes_id AS CHAR)
                  )'
             );
             $stmt->execute();
@@ -296,7 +305,7 @@ final class XtApiApplyService
                 'DELETE FROM xt_plg_products_to_attributes
                  WHERE NOT EXISTS (
                    SELECT 1 FROM xt_plg_products_attributes a
-                   WHERE CAST(a.attributes_id AS TEXT) = CAST(xt_plg_products_to_attributes.attributes_parent_id AS TEXT)
+                   WHERE CAST(a.attributes_id AS CHAR) = CAST(xt_plg_products_to_attributes.attributes_parent_id AS CHAR)
                  )'
             );
             $stmt->execute();
@@ -535,10 +544,12 @@ final class XtApiApplyService
 
     private function tableHasColumn(PDO $pdo, string $table, string $column): bool
     {
-        $stmt = $pdo->query('PRAGMA table_info(' . $this->quoteIdentifier($table) . ')');
+        $stmt = $this->isMysql($pdo)
+            ? $pdo->query('DESCRIBE ' . $this->quoteIdentifier($table))
+            : $pdo->query('PRAGMA table_info(' . $this->quoteIdentifier($table) . ')');
         $rows = $stmt ? $stmt->fetchAll(PDO::FETCH_ASSOC) : [];
         foreach ($rows as $row) {
-            if (strcasecmp((string)($row['name'] ?? ''), $column) === 0) {
+            if (strcasecmp((string)($row['name'] ?? $row['Field'] ?? ''), $column) === 0) {
                 return true;
             }
         }
@@ -603,6 +614,103 @@ final class XtApiApplyService
     /**
      * @return array<string, mixed>
      */
+    private function uploadChangedFiles(PDO $pdo): array
+    {
+        if (
+            !$this->tableHasColumn($pdo, 'media', 'changed') ||
+            !$this->tableHasColumn($pdo, 'media', 'filename') ||
+            !$this->tableHasColumn($pdo, 'media', 'storage_path') ||
+            !$this->tableHasColumn($pdo, 'media', 'checksum')
+        ) {
+            return ['ok' => true, 'received' => 0, 'written' => 0, 'skipped' => 0, 'errors' => []];
+        }
+
+        $rows = $pdo->query(
+            "SELECT filename, type, storage_path, checksum
+             FROM media
+             WHERE changed = 1
+               AND COALESCE(is_deleted, 0) = 0
+               AND storage_path IS NOT NULL
+               AND CAST(storage_path AS CHAR) <> ''
+               AND checksum IS NOT NULL
+               AND checksum <> ''
+               AND checksum <> 'notFound'"
+        )?->fetchAll(PDO::FETCH_ASSOC) ?: [];
+
+        if ($rows === []) {
+            return ['ok' => true, 'received' => 0, 'written' => 0, 'skipped' => 0, 'errors' => [], 'written_paths' => [], 'skipped_paths' => []];
+        }
+
+        $batches = [];
+        $current = [];
+        $currentBytes = 0;
+        foreach ($rows as $row) {
+            $path = (string)($row['storage_path'] ?? '');
+            $filename = basename((string)($row['filename'] ?? ''));
+            if ($path === '' || $filename === '' || !is_file($path)) {
+                continue;
+            }
+            $size = (int)@filesize($path);
+            if ($size <= 0) {
+                continue;
+            }
+            if ($current !== [] && (count($current) >= 10 || ($currentBytes + $size) > 4_000_000)) {
+                $batches[] = $current;
+                $current = [];
+                $currentBytes = 0;
+            }
+            $current[] = [
+                'kind' => strtolower((string)($row['type'] ?? 'image')) === 'dokument' ? 'documents' : 'images',
+                'filename' => $filename,
+                'checksum' => (string)$row['checksum'],
+                'storage_path' => $path,
+            ];
+            $currentBytes += $size;
+        }
+        if ($current !== []) {
+            $batches[] = $current;
+        }
+
+        $stats = ['ok' => true, 'received' => 0, 'written' => 0, 'skipped' => 0, 'errors' => [], 'written_paths' => [], 'skipped_paths' => []];
+        foreach ($batches as $batch) {
+            $files = [];
+            foreach ($batch as $file) {
+                $content = @file_get_contents((string)$file['storage_path']);
+                if ($content === false) {
+                    $stats['errors'][] = 'read_failed:' . $file['filename'];
+                    continue;
+                }
+                $files[] = [
+                    'kind' => $file['kind'],
+                    'filename' => $file['filename'],
+                    'checksum' => $file['checksum'],
+                    'content_base64' => base64_encode($content),
+                ];
+            }
+            if ($files === []) {
+                continue;
+            }
+            $result = $this->request('POST', '/upload-files', ['files' => $files]);
+            $stats['received'] += (int)($result['received'] ?? count($files));
+            $stats['written'] += (int)($result['written'] ?? 0);
+            $stats['skipped'] += (int)($result['skipped'] ?? 0);
+            foreach (($result['errors'] ?? []) as $error) {
+                $stats['errors'][] = (string)$error;
+            }
+            foreach (($result['written_paths'] ?? []) as $path) {
+                $stats['written_paths'][] = (string)$path;
+            }
+            foreach (($result['skipped_paths'] ?? []) as $path) {
+                $stats['skipped_paths'][] = (string)$path;
+            }
+        }
+        $stats['ok'] = $stats['errors'] === [];
+        return $stats;
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
     private function loadMapping(string $name): array
     {
         $path = __DIR__ . '/../../Config/mappings/' . $name . '.php';
@@ -618,7 +726,12 @@ final class XtApiApplyService
 
     private function quoteIdentifier(string $name): string
     {
-        return '"' . str_replace('"', '""', $name) . '"';
+        return '`' . str_replace('`', '``', $name) . '`';
+    }
+
+    private function isMysql(PDO $pdo): bool
+    {
+        return (string)$pdo->getAttribute(PDO::ATTR_DRIVER_NAME) === 'mysql';
     }
 
     private function remoteTableName(string $table): string

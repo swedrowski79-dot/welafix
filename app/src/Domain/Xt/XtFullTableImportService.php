@@ -5,6 +5,7 @@ namespace Welafix\Domain\Xt;
 
 use PDO;
 use RuntimeException;
+use Welafix\Database\ConnectionFactory;
 use Welafix\Database\Db;
 
 final class XtFullTableImportService
@@ -63,7 +64,7 @@ final class XtFullTableImportService
         }
         $pkCols = $this->detectPk($columns);
 
-        $pdo = Db::guardSqlite(Db::sqlite(), __METHOD__);
+        $pdo = (new ConnectionFactory())->localDb();
         $this->ensureTable($pdo, $targetTable, $columns, $pkCols);
         $this->ensureChangedColumn($pdo, $targetTable);
 
@@ -207,7 +208,9 @@ final class XtFullTableImportService
             }
             $pdo->commit();
         } catch (\Throwable $e) {
-            $pdo->rollBack();
+            if ($pdo->inTransaction()) {
+                $pdo->rollBack();
+            }
             throw $e;
         }
     }
@@ -241,7 +244,7 @@ final class XtFullTableImportService
         if (!preg_match('/^[A-Za-z0-9_]+$/', $table)) {
             throw new RuntimeException('Ungültige Tabelle');
         }
-        $exists = $pdo->query('SELECT name FROM sqlite_master WHERE type="table" AND name=' . $pdo->quote($table))->fetchColumn();
+        $exists = $this->tableExists($pdo, $table);
         if (!$exists) {
             $defs = [];
             foreach ($columns as $col) {
@@ -251,11 +254,12 @@ final class XtFullTableImportService
                 }
                 $defs[] = $this->quoteIdentifier($name) . ' ' . $this->mapType((string)($col['type'] ?? ''));
             }
-            $defs[] = 'changed INTEGER NOT NULL DEFAULT 0';
+            $defs[] = 'changed ' . ($this->isMysql($pdo) ? 'TINYINT NOT NULL DEFAULT 0' : 'INTEGER NOT NULL DEFAULT 0');
             if (count($pkCols) === 1) {
                 $defs[] = 'PRIMARY KEY (' . $this->quoteIdentifier($pkCols[0]) . ')';
             }
-            $pdo->exec('CREATE TABLE ' . $this->quoteIdentifier($table) . ' (' . implode(', ', $defs) . ')');
+            $suffix = $this->isMysql($pdo) ? ' ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci' : '';
+            $pdo->exec('CREATE TABLE ' . $this->quoteIdentifier($table) . ' (' . implode(', ', $defs) . ')' . $suffix);
         } else {
             $existing = $this->getExistingColumns($pdo, $table);
             foreach ($columns as $col) {
@@ -267,9 +271,11 @@ final class XtFullTableImportService
             }
         }
         if (count($pkCols) > 1) {
-            $idx = 'idx_' . $table . '_' . implode('_', $pkCols);
+            $idx = $this->buildIndexName($table, $pkCols, 'uniq');
             $cols = implode(',', array_map([$this, 'quoteIdentifier'], $pkCols));
-            $pdo->exec('CREATE UNIQUE INDEX IF NOT EXISTS ' . $idx . ' ON ' . $this->quoteIdentifier($table) . '(' . $cols . ')');
+            if (!$this->indexExists($pdo, $table, $idx)) {
+                $pdo->exec(($this->isMysql($pdo) ? 'CREATE UNIQUE INDEX ' : 'CREATE UNIQUE INDEX IF NOT EXISTS ') . $this->quoteIdentifier($idx) . ' ON ' . $this->quoteIdentifier($table) . '(' . $cols . ')');
+            }
         }
     }
 
@@ -277,9 +283,12 @@ final class XtFullTableImportService
     {
         $cols = $this->getExistingColumns($pdo, $table);
         if (!isset($cols['changed'])) {
-            $pdo->exec('ALTER TABLE ' . $this->quoteIdentifier($table) . ' ADD COLUMN changed INTEGER NOT NULL DEFAULT 0');
+            $pdo->exec('ALTER TABLE ' . $this->quoteIdentifier($table) . ' ADD COLUMN changed ' . ($this->isMysql($pdo) ? 'TINYINT NOT NULL DEFAULT 0' : 'INTEGER NOT NULL DEFAULT 0'));
         }
-        $pdo->exec('CREATE INDEX IF NOT EXISTS idx_' . $table . '_changed ON ' . $this->quoteIdentifier($table) . '(changed)');
+        $indexName = $this->buildIndexName($table, ['changed'], 'idx');
+        if (!$this->indexExists($pdo, $table, $indexName)) {
+            $pdo->exec(($this->isMysql($pdo) ? 'CREATE INDEX ' : 'CREATE INDEX IF NOT EXISTS ') . $this->quoteIdentifier($indexName) . ' ON ' . $this->quoteIdentifier($table) . '(changed)');
+        }
     }
 
     /**
@@ -287,11 +296,13 @@ final class XtFullTableImportService
      */
     private function getExistingColumns(PDO $pdo, string $table): array
     {
-        $stmt = $pdo->query('PRAGMA table_info(' . $this->quoteIdentifier($table) . ')');
+        $stmt = $this->isMysql($pdo)
+            ? $pdo->query('DESCRIBE ' . $this->quoteIdentifier($table))
+            : $pdo->query('PRAGMA table_info(' . $this->quoteIdentifier($table) . ')');
         $rows = $stmt ? $stmt->fetchAll(PDO::FETCH_ASSOC) : [];
         $cols = [];
         foreach ($rows as $row) {
-            $name = (string)($row['name'] ?? '');
+            $name = (string)($row['name'] ?? $row['Field'] ?? '');
             if ($name !== '') {
                 $cols[strtolower($name)] = true;
             }
@@ -386,6 +397,58 @@ final class XtFullTableImportService
 
     private function quoteIdentifier(string $name): string
     {
-        return '"' . str_replace('"', '""', $name) . '"';
+        return '`' . str_replace('`', '``', $name) . '`';
+    }
+
+    /**
+     * @param array<int, string> $columns
+     */
+    private function buildIndexName(string $table, array $columns, string $prefix): string
+    {
+        $base = $prefix . '_' . $table . '_' . implode('_', $columns);
+        if (strlen($base) <= 60) {
+            return $base;
+        }
+
+        return substr($prefix . '_' . $table, 0, 40) . '_' . substr(sha1($base), 0, 16);
+    }
+
+    private function indexExists(PDO $pdo, string $table, string $indexName): bool
+    {
+        if ($this->isMysql($pdo)) {
+            $stmt = $pdo->prepare(
+                'SELECT COUNT(*) FROM information_schema.statistics
+                 WHERE table_schema = DATABASE() AND table_name = :table AND index_name = :index_name'
+            );
+            $stmt->execute([
+                ':table' => $table,
+                ':index_name' => $indexName,
+            ]);
+            return (int)$stmt->fetchColumn() > 0;
+        }
+
+        $stmt = $pdo->prepare(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND tbl_name = :table AND name = :index_name"
+        );
+        $stmt->execute([
+            ':table' => $table,
+            ':index_name' => $indexName,
+        ]);
+        return (int)$stmt->fetchColumn() > 0;
+    }
+
+    private function isMysql(PDO $pdo): bool
+    {
+        return (string)$pdo->getAttribute(PDO::ATTR_DRIVER_NAME) === 'mysql';
+    }
+
+    private function tableExists(PDO $pdo, string $table): bool
+    {
+        if ($this->isMysql($pdo)) {
+            $stmt = $pdo->prepare('SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = :table');
+            $stmt->execute([':table' => $table]);
+            return (int)$stmt->fetchColumn() > 0;
+        }
+        return (bool)$pdo->query('SELECT name FROM sqlite_master WHERE type="table" AND name=' . $pdo->quote($table))->fetchColumn();
     }
 }

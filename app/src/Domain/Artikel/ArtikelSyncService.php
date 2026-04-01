@@ -36,7 +36,7 @@ final class ArtikelSyncService
      */
     public function processBatch(string $afterKey, int $batchSize = 500): array
     {
-        $pdo = Db::guardSqlite(Db::sqlite(), __METHOD__);
+        $pdo = $this->factory->localDb();
         $this->ensureStateTable($pdo);
 
         if ($afterKey === '') {
@@ -60,6 +60,7 @@ final class ArtikelSyncService
         $keyField = (string)(($mapping['source']['key'] ?? 'Artikel') ?: 'Artikel');
         $deltaOnly = $this->resolveDeltaOnlyMode($mapping, $pdo, 'artikel', $afterKey);
         $afsQueue = new AfsUpdateQueue($pdo);
+        $afsQueue->ensureTable();
 
         try {
             $rows = $mssqlRepo->fetchAfterByMapping($mapping, $afterKey, $batchSize, $deltaOnly);
@@ -222,7 +223,9 @@ final class ArtikelSyncService
                 $batchStats['media_assignments_written'] = $mediaAssignmentsWritten;
                 $batchStats['warengruppe_assignments_written'] = $warengruppeAssignmentsWritten;
             } catch (\Throwable $e) {
-                $pdo->rollBack();
+                if ($pdo->inTransaction()) {
+                    $pdo->rollBack();
+                }
                 throw $e;
             }
         }
@@ -272,7 +275,7 @@ final class ArtikelSyncService
      */
     public function getState(): array
     {
-        $pdo = $this->factory->sqlite();
+        $pdo = $this->factory->localDb();
         $this->ensureStateTable($pdo);
         return $this->loadState($pdo);
     }
@@ -370,6 +373,26 @@ final class ArtikelSyncService
 
     private function ensureStateTable(\PDO $pdo): void
     {
+        if ($this->isMysql($pdo)) {
+            $pdo->exec(
+                'CREATE TABLE IF NOT EXISTS sync_state (
+                    type VARCHAR(64) PRIMARY KEY,
+                    last_key VARCHAR(255) NULL,
+                    total_fetched INT NOT NULL DEFAULT 0,
+                    inserted INT NOT NULL DEFAULT 0,
+                    updated INT NOT NULL DEFAULT 0,
+                    unchanged INT NOT NULL DEFAULT 0,
+                    errors_count INT NOT NULL DEFAULT 0,
+                    batches INT NOT NULL DEFAULT 0,
+                    started_at VARCHAR(64) NULL,
+                    updated_at VARCHAR(64) NULL,
+                    done TINYINT NOT NULL DEFAULT 0,
+                    delta_only TINYINT NOT NULL DEFAULT 0
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci'
+            );
+            $this->ensureSyncStateDeltaOnlyColumn($pdo);
+            return;
+        }
         $pdo->exec(
             'CREATE TABLE IF NOT EXISTS sync_state (
                 type TEXT PRIMARY KEY,
@@ -392,10 +415,24 @@ final class ArtikelSyncService
     private function resetState(\PDO $pdo): void
     {
         $now = (new DateTimeImmutable('now', new DateTimeZone('UTC')))->format(DATE_ATOM);
-        $stmt = $pdo->prepare(
-            'INSERT INTO sync_state (type, last_key, total_fetched, inserted, updated, unchanged, errors_count, batches, started_at, updated_at, done, delta_only)
-             VALUES (:type, :last_key, 0, 0, 0, 0, 0, 0, :started_at, :updated_at, 0, 0)
-             ON CONFLICT(type) DO UPDATE SET
+        $stmt = $pdo->prepare($this->isMysql($pdo)
+            ? 'INSERT INTO sync_state (type, last_key, total_fetched, inserted, updated, unchanged, errors_count, batches, started_at, updated_at, done, delta_only)
+               VALUES (:type, :last_key, 0, 0, 0, 0, 0, 0, :started_at, :updated_at, 0, 0)
+               ON DUPLICATE KEY UPDATE
+               last_key = VALUES(last_key),
+               total_fetched = 0,
+               inserted = 0,
+               updated = 0,
+               unchanged = 0,
+               errors_count = 0,
+               batches = 0,
+               started_at = VALUES(started_at),
+               updated_at = VALUES(updated_at),
+               done = 0,
+               delta_only = 0'
+            : 'INSERT INTO sync_state (type, last_key, total_fetched, inserted, updated, unchanged, errors_count, batches, started_at, updated_at, done, delta_only)
+               VALUES (:type, :last_key, 0, 0, 0, 0, 0, 0, :started_at, :updated_at, 0, 0)
+               ON CONFLICT(type) DO UPDATE SET
                last_key = :last_key,
                total_fetched = 0,
                inserted = 0,
@@ -406,8 +443,7 @@ final class ArtikelSyncService
                started_at = :started_at,
                updated_at = :updated_at,
                done = 0,
-               delta_only = 0'
-        );
+               delta_only = 0');
         $stmt->execute([
             ':type' => self::STATE_TYPE,
             ':last_key' => '',
@@ -438,10 +474,23 @@ final class ArtikelSyncService
             $state['done'] = 1;
         }
 
-        $stmt = $pdo->prepare(
-            'INSERT INTO sync_state (type, last_key, total_fetched, inserted, updated, unchanged, errors_count, batches, started_at, updated_at, done, delta_only)
-             VALUES (:type, :last_key, :total_fetched, :inserted, :updated, :unchanged, :errors_count, :batches, :started_at, :updated_at, :done, :delta_only)
-             ON CONFLICT(type) DO UPDATE SET
+        $stmt = $pdo->prepare($this->isMysql($pdo)
+            ? 'INSERT INTO sync_state (type, last_key, total_fetched, inserted, updated, unchanged, errors_count, batches, started_at, updated_at, done, delta_only)
+               VALUES (:type, :last_key, :total_fetched, :inserted, :updated, :unchanged, :errors_count, :batches, :started_at, :updated_at, :done, :delta_only)
+               ON DUPLICATE KEY UPDATE
+               last_key = VALUES(last_key),
+               total_fetched = VALUES(total_fetched),
+               inserted = VALUES(inserted),
+               updated = VALUES(updated),
+               unchanged = VALUES(unchanged),
+               errors_count = VALUES(errors_count),
+               batches = VALUES(batches),
+               updated_at = VALUES(updated_at),
+               done = VALUES(done),
+               delta_only = VALUES(delta_only)'
+            : 'INSERT INTO sync_state (type, last_key, total_fetched, inserted, updated, unchanged, errors_count, batches, started_at, updated_at, done, delta_only)
+               VALUES (:type, :last_key, :total_fetched, :inserted, :updated, :unchanged, :errors_count, :batches, :started_at, :updated_at, :done, :delta_only)
+               ON CONFLICT(type) DO UPDATE SET
                last_key = :last_key,
                total_fetched = :total_fetched,
                inserted = :inserted,
@@ -451,8 +500,7 @@ final class ArtikelSyncService
                batches = :batches,
                updated_at = :updated_at,
                done = :done,
-               delta_only = :delta_only'
-        );
+               delta_only = :delta_only');
 
         $stmt->execute([
             ':type' => self::STATE_TYPE,
@@ -477,11 +525,13 @@ final class ArtikelSyncService
      */
     private function loadExistingColumns(\PDO $pdo, string $table): array
     {
-        $stmt = $pdo->query('PRAGMA table_info(' . $this->quoteIdentifier($table) . ')');
+        $stmt = $this->isMysql($pdo)
+            ? $pdo->query('DESCRIBE ' . $this->quoteIdentifier($table))
+            : $pdo->query('PRAGMA table_info(' . $this->quoteIdentifier($table) . ')');
         $rows = $stmt->fetchAll(\PDO::FETCH_ASSOC) ?: [];
         $columns = [];
         foreach ($rows as $row) {
-            $name = (string)($row['name'] ?? '');
+            $name = (string)($row['name'] ?? $row['Field'] ?? '');
             if ($name !== '') {
                 $columns[strtolower($name)] = $name;
             }
@@ -492,7 +542,7 @@ final class ArtikelSyncService
 
     private function quoteIdentifier(string $name): string
     {
-        return '"' . str_replace('"', '""', $name) . '"';
+        return '`' . str_replace('`', '``', $name) . '`';
     }
 
     private function markDeletedMissing(\PDO $pdo, string $startedAt): int
@@ -571,14 +621,16 @@ final class ArtikelSyncService
 
     private function ensureSyncStateDeltaOnlyColumn(\PDO $pdo): void
     {
-        $stmt = $pdo->query('PRAGMA table_info(sync_state)');
+        $stmt = $this->isMysql($pdo)
+            ? $pdo->query('DESCRIBE ' . $this->quoteIdentifier('sync_state'))
+            : $pdo->query('PRAGMA table_info(sync_state)');
         $rows = $stmt ? ($stmt->fetchAll(\PDO::FETCH_ASSOC) ?: []) : [];
         foreach ($rows as $row) {
-            if (strcasecmp((string)($row['name'] ?? ''), 'delta_only') === 0) {
+            if (strcasecmp((string)($row['name'] ?? $row['Field'] ?? ''), 'delta_only') === 0) {
                 return;
             }
         }
-        $pdo->exec('ALTER TABLE sync_state ADD COLUMN delta_only INTEGER DEFAULT 0');
+        $pdo->exec('ALTER TABLE sync_state ADD COLUMN delta_only ' . ($this->isMysql($pdo) ? 'TINYINT DEFAULT 0' : 'INTEGER DEFAULT 0'));
     }
 
     /**
@@ -757,5 +809,10 @@ final class ArtikelSyncService
             ];
         }
         return $row;
+    }
+
+    private function isMysql(\PDO $pdo): bool
+    {
+        return (string)$pdo->getAttribute(\PDO::ATTR_DRIVER_NAME) === 'mysql';
     }
 }

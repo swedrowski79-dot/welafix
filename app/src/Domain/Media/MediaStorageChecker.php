@@ -29,7 +29,7 @@ final class MediaStorageChecker
      */
     public function check(): array
     {
-        $pdo = $this->factory->sqlite();
+        $pdo = $this->factory->localDb();
         $imageBase = $this->imageStorageBase();
         $docBase = $this->documentStorageBase();
         $imageStorageAvailable = is_dir($imageBase);
@@ -309,11 +309,13 @@ final class MediaStorageChecker
      */
     private function findExistingColumns(PDO $pdo, string $table, array $names): array
     {
-        $stmt = $pdo->query('PRAGMA table_info(' . $this->quoteIdentifier($table) . ')');
+        $stmt = $this->isMysql($pdo)
+            ? $pdo->query('DESCRIBE ' . $this->quoteIdentifier($table))
+            : $pdo->query('PRAGMA table_info(' . $this->quoteIdentifier($table) . ')');
         $rows = $stmt ? $stmt->fetchAll(PDO::FETCH_ASSOC) : [];
         $existing = [];
         foreach ($rows as $row) {
-            $name = (string)($row['name'] ?? '');
+            $name = (string)($row['name'] ?? $row['Field'] ?? '');
             if ($name !== '') {
                 $existing[strtolower($name)] = $name;
             }
@@ -336,6 +338,11 @@ final class MediaStorageChecker
 
     private function quoteIdentifier(string $name): string
     {
-        return '"' . str_replace('"', '""', $name) . '"';
+        return '`' . str_replace('`', '``', $name) . '`';
+    }
+
+    private function isMysql(PDO $pdo): bool
+    {
+        return (string)$pdo->getAttribute(PDO::ATTR_DRIVER_NAME) === 'mysql';
     }
 }

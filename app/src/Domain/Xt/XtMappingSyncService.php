@@ -23,6 +23,11 @@ final class XtMappingSyncService
     private array $targetRowCache = [];
     /** @var array<string, array<string, bool>> */
     private array $loggedMissing = [];
+    /** @var array<string, array<string, string>> */
+    private array $seoUrlOwners = [];
+    /** @var array<string, string> */
+    private array $seoOwnUrls = [];
+    private bool $seoCacheLoaded = false;
     private ?PDO $pdo = null;
     private bool $debugEnabled = false;
     /** @var array<string, int> */
@@ -40,10 +45,9 @@ final class XtMappingSyncService
         }
         $this->targetMetas = $this->buildTargetMetas($targets);
 
-        $pdo = Db::guardSqlite(Db::sqlite(), __METHOD__ . ':write');
+        $pdo = (new ConnectionFactory())->localDb();
         $this->pdo = $pdo;
-        // separate read connection to avoid write-locks while iterating source rows
-        $readPdo = Db::guardSqlite((new ConnectionFactory())->sqlite(), __METHOD__ . ':read');
+        $readPdo = (new ConnectionFactory())->localDb();
         $deleteSync = new XtDeletedSyncService(new ConnectionFactory());
         $batchSize = $this->loadBatchSize($pdo);
         $debugMeta = $this->loadDebugEnabled($pdo);
@@ -110,7 +114,7 @@ final class XtMappingSyncService
                 continue;
             }
 
-            $offset = 0;
+            $lastRowId = 0;
             $totals = [
                 'inserted' => 0,
                 'updated' => 0,
@@ -120,7 +124,7 @@ final class XtMappingSyncService
                 'base' => $base,
             ];
             while (true) {
-                $sourceRows = $this->fetchSourceRowsBatch($readPdo, $base, $batchSize, $offset);
+                $sourceRows = $this->fetchSourceRowsBatch($readPdo, $base, $table, $batchSize, $lastRowId);
                 if ($sourceRows === []) {
                     break;
                 }
@@ -133,7 +137,8 @@ final class XtMappingSyncService
                 if (!empty($result['needs_nested_set'])) {
                     $totals['needs_nested_set'] = true;
                 }
-                $offset += $batchSize;
+                $lastRow = end($sourceRows);
+                $lastRowId = (int)($lastRow['__cursor'] ?? $lastRowId);
             }
 
             $stats['targets'][$targetName] = $totals + ['table' => $table];
@@ -217,6 +222,9 @@ final class XtMappingSyncService
                         $values[$col] = $exprValue;
                     }
                 }
+                if ($table === 'xt_seo_url') {
+                    $values = $this->ensureUniqueSeoUrlValues($pdo, $values);
+                }
 
                 $pkValues = $this->buildPkValues($pkCols, $values);
                 $uniqueValues = $this->buildPkValues($uniqueCols, $values);
@@ -274,9 +282,28 @@ final class XtMappingSyncService
                         continue;
                     }
                     if ($existing === null && $hasUnique && $updateByUnique) {
-                        $this->bindValues($updateByUnique, $values, $columns, $existingCols, $uniqueCols, $autoCols, $updateByUniqueCols);
-                        $this->bindPk($updateByUnique, $uniqueCols, $uniqueValues);
-                        $updateByUnique->execute();
+                        try {
+                            $this->bindValues($updateByUnique, $values, $columns, $existingCols, $uniqueCols, $autoCols, $updateByUniqueCols);
+                            $this->bindPk($updateByUnique, $uniqueCols, $uniqueValues);
+                            $updateByUnique->execute();
+                        } catch (\Throwable $e) {
+                            $this->logSqlError($table, $updateByUnique->queryString ?? 'updateByUnique', [
+                                'values' => $values,
+                                'unique' => $uniqueValues,
+                            ], $e);
+                            if ($table === 'xt_seo_url') {
+                                if (str_contains($e->getMessage(), 'url_md5')) {
+                                    $this->logUniqueConflict($table, ['url_md5'], $values, $pdo);
+                                    $this->logWarning('WARNING table=' . $table . ' reason=unique_update_by_unique_failed error=' . $e->getMessage());
+                                } else {
+                                    $this->logWarning('WARNING table=' . $table . ' reason=update_by_unique_failed error=' . $e->getMessage());
+                                }
+                                $updateByUnique = $this->buildUpdateStatement($pdo, $table, $columns, $existingCols, $uniqueCols);
+                                $unchanged++;
+                                continue;
+                            }
+                            throw $e;
+                        }
                         if ($updateByUnique->rowCount() > 0) {
                             $updated++;
                             if ($selectByUnique) {
@@ -285,8 +312,10 @@ final class XtMappingSyncService
                                 $existing = $selectByUnique->fetch(PDO::FETCH_ASSOC) ?: null;
                                 if ($existing) {
                                     $lookupPk = $this->buildPkValues($pkCols, $existing);
-                                    $this->setChanged($pdo, $table, $pkCols, $lookupPk);
                                 }
+                            }
+                            if ($table === 'xt_seo_url') {
+                                $this->rememberSeoUrlValues($values);
                             }
                             $this->updateTargetMap($table, $values, $pkCols, $pdo);
                             continue;
@@ -315,9 +344,11 @@ final class XtMappingSyncService
                         }
                         throw $e;
                     }
-                    $this->setChanged($pdo, $table, $pkCols, $this->buildPkValues($pkCols, $values));
                     if ($table === 'xt_categories') {
                         $needsNestedSet = true;
+                    }
+                    if ($table === 'xt_seo_url') {
+                        $this->rememberSeoUrlValues($values);
                     }
                     $this->updateTargetMap($table, $values, $pkCols, $pdo);
                     continue;
@@ -342,18 +373,25 @@ final class XtMappingSyncService
                             'values' => $values,
                             'pk' => $lookupPk,
                         ], $e);
-                        if ($table === 'xt_seo_url' && str_contains($e->getMessage(), 'url_md5')) {
-                            $this->logUniqueConflict($table, ['url_md5'], $values, $pdo);
-                            $this->logWarning('WARNING table=' . $table . ' reason=unique_update_failed error=' . $e->getMessage());
+                        if ($table === 'xt_seo_url') {
+                            if (str_contains($e->getMessage(), 'url_md5')) {
+                                $this->logUniqueConflict($table, ['url_md5'], $values, $pdo);
+                                $this->logWarning('WARNING table=' . $table . ' reason=unique_update_failed error=' . $e->getMessage());
+                            } else {
+                                $this->logWarning('WARNING table=' . $table . ' reason=update_failed error=' . $e->getMessage());
+                            }
+                            $updateStmt = $this->buildUpdateStatement($pdo, $table, $columns, $existingCols, $pkCols);
                             $unchanged++;
                             continue;
                         }
                         throw $e;
                     }
                     $updated++;
-                    $this->setChanged($pdo, $table, $pkCols, $lookupPk);
                     if ($table === 'xt_categories') {
                         $needsNestedSet = true;
+                    }
+                    if ($table === 'xt_seo_url') {
+                        $this->rememberSeoUrlValues($values);
                     }
                     $this->updateTargetMap($table, $values, $pkCols, $pdo);
             } else {
@@ -387,9 +425,9 @@ final class XtMappingSyncService
             return;
         }
         if (!isset($info['changed'])) {
-            $pdo->exec('ALTER TABLE ' . $this->quoteIdentifier($table) . ' ADD COLUMN changed INTEGER NOT NULL DEFAULT 0');
+            $pdo->exec('ALTER TABLE ' . $this->quoteIdentifier($table) . ' ADD COLUMN changed ' . ($this->isMysql($pdo) ? 'TINYINT NOT NULL DEFAULT 0' : 'INTEGER NOT NULL DEFAULT 0'));
         }
-        $pdo->exec('CREATE INDEX IF NOT EXISTS idx_' . $table . '_changed ON ' . $this->quoteIdentifier($table) . '(changed)');
+        $this->createIndexIfMissing($pdo, 'idx_' . $table . '_changed', $table, ['changed']);
         if ($table === 'xt_seo_url') {
             try {
                 // log duplicate url_md5 (do not enforce UNIQUE index automatically)
@@ -401,7 +439,7 @@ final class XtMappingSyncService
                         foreach ($dups as $dup) {
                             $md5 = (string)($dup['url_md5'] ?? '');
                             $cnt = (int)($dup['c'] ?? 0);
-                            $rows = $pdo->query('SELECT rowid, url_text, link_id, link_type, language_code, store_id FROM xt_seo_url WHERE url_md5 = ' . $pdo->quote($md5))?->fetchAll(PDO::FETCH_ASSOC) ?: [];
+                            $rows = $pdo->query('SELECT url_text, link_id, link_type, language_code, store_id FROM xt_seo_url WHERE url_md5 = ' . $pdo->quote($md5))?->fetchAll(PDO::FETCH_ASSOC) ?: [];
                             $entry = [
                                 'ts' => (new DateTimeImmutable('now', new DateTimeZone('UTC')))->format(DATE_ATOM),
                                 'url_md5' => $md5,
@@ -416,6 +454,118 @@ final class XtMappingSyncService
                 $this->logWarning('WARNING table=xt_seo_url reason=md5_unique_failed error=' . $e->getMessage());
             }
         }
+    }
+
+    /**
+     * @param array<string, mixed> $values
+     * @return array<string, mixed>
+     */
+    private function ensureUniqueSeoUrlValues(PDO $pdo, array $values): array
+    {
+        $this->ensureSeoCacheLoaded($pdo);
+        $base = trim((string)($values['url_text'] ?? ''));
+        $languageCode = trim((string)($values['language_code'] ?? ''));
+        $storeId = trim((string)($values['store_id'] ?? ''));
+        $linkType = trim((string)($values['link_type'] ?? ''));
+        $linkId = trim((string)($values['link_id'] ?? ''));
+        if ($base === '' || $languageCode === '' || $storeId === '' || $linkType === '' || $linkId === '') {
+            return $values;
+        }
+
+        $ownExisting = $this->findOwnSeoUrl($pdo, $linkType, $linkId, $languageCode, $storeId);
+        if ($ownExisting !== null) {
+            $ownTrimmed = trim($ownExisting);
+            if ($ownTrimmed !== '' && ($ownTrimmed === $base || preg_match('/^' . preg_quote($base, '/') . '-\d+$/', $ownTrimmed))) {
+                if (!$this->seoUrlExistsForOther($pdo, $ownTrimmed, $languageCode, $storeId, $linkType, $linkId)) {
+                    $values['url_text'] = $ownTrimmed;
+                    $values['url_md5'] = md5($ownTrimmed);
+                    return $values;
+                }
+            }
+        }
+
+        $candidate = $base;
+        $suffix = 0;
+        while ($this->seoUrlExistsForOther($pdo, $candidate, $languageCode, $storeId, $linkType, $linkId)) {
+            $suffix++;
+            $candidate = $base . '-' . $suffix;
+        }
+
+        $values['url_text'] = $candidate;
+        $values['url_md5'] = md5($candidate);
+        return $values;
+    }
+
+    private function findOwnSeoUrl(PDO $pdo, string $linkType, string $linkId, string $languageCode, string $storeId): ?string
+    {
+        $ownerKey = $this->seoOwnerKey($linkType, $linkId, $languageCode, $storeId);
+        return $this->seoOwnUrls[$ownerKey] ?? null;
+    }
+
+    private function seoUrlExistsForOther(PDO $pdo, string $urlText, string $languageCode, string $storeId, string $linkType, string $linkId): bool
+    {
+        $scopeKey = $this->seoScopeKey($languageCode, $storeId);
+        $ownerKey = $this->seoOwnerKey($linkType, $linkId, $languageCode, $storeId);
+        $existingOwner = $this->seoUrlOwners[$scopeKey][$urlText] ?? null;
+        return $existingOwner !== null && $existingOwner !== $ownerKey;
+    }
+
+    private function ensureSeoCacheLoaded(PDO $pdo): void
+    {
+        if ($this->seoCacheLoaded || !$this->tableExists($pdo, 'xt_seo_url')) {
+            $this->seoCacheLoaded = true;
+            return;
+        }
+        $stmt = $pdo->query('SELECT url_text, language_code, store_id, link_type, link_id FROM xt_seo_url');
+        $rows = $stmt ? ($stmt->fetchAll(PDO::FETCH_ASSOC) ?: []) : [];
+        foreach ($rows as $row) {
+            $urlText = trim((string)($row['url_text'] ?? ''));
+            $languageCode = trim((string)($row['language_code'] ?? ''));
+            $storeId = trim((string)($row['store_id'] ?? ''));
+            $linkType = trim((string)($row['link_type'] ?? ''));
+            $linkId = trim((string)($row['link_id'] ?? ''));
+            if ($urlText === '' || $languageCode === '' || $storeId === '' || $linkType === '' || $linkId === '') {
+                continue;
+            }
+            $scopeKey = $this->seoScopeKey($languageCode, $storeId);
+            $ownerKey = $this->seoOwnerKey($linkType, $linkId, $languageCode, $storeId);
+            $this->seoUrlOwners[$scopeKey][$urlText] = $ownerKey;
+            $this->seoOwnUrls[$ownerKey] = $urlText;
+        }
+        $this->seoCacheLoaded = true;
+    }
+
+    /**
+     * @param array<string, mixed> $values
+     */
+    private function rememberSeoUrlValues(array $values): void
+    {
+        $urlText = trim((string)($values['url_text'] ?? ''));
+        $languageCode = trim((string)($values['language_code'] ?? ''));
+        $storeId = trim((string)($values['store_id'] ?? ''));
+        $linkType = trim((string)($values['link_type'] ?? ''));
+        $linkId = trim((string)($values['link_id'] ?? ''));
+        if ($urlText === '' || $languageCode === '' || $storeId === '' || $linkType === '' || $linkId === '') {
+            return;
+        }
+        $scopeKey = $this->seoScopeKey($languageCode, $storeId);
+        $ownerKey = $this->seoOwnerKey($linkType, $linkId, $languageCode, $storeId);
+        $oldUrl = $this->seoOwnUrls[$ownerKey] ?? null;
+        if ($oldUrl !== null && isset($this->seoUrlOwners[$scopeKey][$oldUrl]) && $this->seoUrlOwners[$scopeKey][$oldUrl] === $ownerKey) {
+            unset($this->seoUrlOwners[$scopeKey][$oldUrl]);
+        }
+        $this->seoOwnUrls[$ownerKey] = $urlText;
+        $this->seoUrlOwners[$scopeKey][$urlText] = $ownerKey;
+    }
+
+    private function seoScopeKey(string $languageCode, string $storeId): string
+    {
+        return $languageCode . '|' . $storeId;
+    }
+
+    private function seoOwnerKey(string $linkType, string $linkId, string $languageCode, string $storeId): string
+    {
+        return $linkType . '|' . $linkId . '|' . $languageCode . '|' . $storeId;
     }
 
     /**
@@ -474,40 +624,46 @@ final class XtMappingSyncService
     /**
      * @return array<int, array<string, mixed>>
      */
-    private function fetchSourceRowsBatch(PDO $pdo, string $source, int $limit, int $offset): array
+    private function fetchSourceRowsBatch(PDO $pdo, string $source, string $targetTable, int $limit, int $afterRowId): array
     {
         if (!preg_match('/^[A-Za-z0-9_]+$/', $source)) {
             return [];
         }
         $limit = max(1, $limit);
-        $offset = max(0, $offset);
-        $sql = $this->buildSourceSelectSql($source) . ' LIMIT :limit OFFSET :offset';
+        $afterRowId = max(0, $afterRowId);
+        $cursor = $this->sourceCursorColumn($source);
+        $sql = $this->buildSourceSelectSql($source, $targetTable) . ' AND s.' . $this->quoteIdentifier($cursor) . ' > :after_rowid ORDER BY s.' . $this->quoteIdentifier($cursor) . ' ASC LIMIT :limit';
         $stmt = $pdo->prepare($sql);
         $stmt->bindValue(':limit', $limit, PDO::PARAM_INT);
-        $stmt->bindValue(':offset', $offset, PDO::PARAM_INT);
+        $stmt->bindValue(':after_rowid', $afterRowId, PDO::PARAM_INT);
         $stmt->execute();
         return $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
     }
 
-    private function buildSourceSelectSql(string $source): string
+    private function buildSourceSelectSql(string $source, string $targetTable = ''): string
     {
         $table = $this->quoteIdentifier($source);
+        $cursor = 's.' . $this->quoteIdentifier($this->sourceCursorColumn($source)) . ' AS __cursor';
         if ($source === 'artikel') {
-            return 'SELECT s.*, m.meta_title AS meta_title, m.meta_description AS meta_description
+            $where = 'WHERE COALESCE(s.changed, 0) = 1';
+            if ($targetTable === 'xt_products_to_categories') {
+                $where .= ' AND COALESCE(s.master_modell, \'\') = \'\'';
+            }
+            return 'SELECT ' . $cursor . ', s.*, m.meta_title AS meta_title, m.meta_description AS meta_description
                     FROM ' . $table . ' s
-                    LEFT JOIN "Meta_Data_Artikel" m ON m.afs_artikel_id = s.afs_artikel_id
-                    WHERE COALESCE(s.changed, 0) = 1';
+                    LEFT JOIN ' . $this->quoteIdentifier('Meta_Data_Artikel') . ' m ON m.afs_artikel_id = s.afs_artikel_id
+                    ' . $where;
         }
         if ($source === 'warengruppe') {
-            return 'SELECT s.*, m.meta_title AS meta_title, m.meta_description AS meta_description
+            return 'SELECT ' . $cursor . ', s.*, m.meta_title AS meta_title, m.meta_description AS meta_description
                     FROM ' . $table . ' s
-                    LEFT JOIN "Meta_Data_Waregruppen" m ON m.afs_wg_id = s.afs_wg_id
+                    LEFT JOIN ' . $this->quoteIdentifier('Meta_Data_Waregruppen') . ' m ON m.afs_wg_id = s.afs_wg_id
                     WHERE COALESCE(s.changed, 0) = 1';
         }
         if ($this->sourceHasChangedColumn($source)) {
-            return 'SELECT * FROM ' . $table . ' WHERE COALESCE(changed, 0) = 1';
+            return 'SELECT ' . $cursor . ', s.* FROM ' . $table . ' s WHERE COALESCE(s.changed, 0) = 1';
         }
-        return 'SELECT * FROM ' . $table;
+        return 'SELECT ' . $cursor . ', s.* FROM ' . $table . ' s WHERE 1 = 1';
     }
 
     private function sourceHasChangedColumn(string $source): bool
@@ -516,10 +672,10 @@ final class XtMappingSyncService
         if (!$pdo || !preg_match('/^[A-Za-z0-9_]+$/', $source)) {
             return false;
         }
-        $stmt = $pdo->query('PRAGMA table_info(' . $this->quoteIdentifier($source) . ')');
+        $stmt = $this->describeTable($pdo, $source);
         $rows = $stmt ? $stmt->fetchAll(PDO::FETCH_ASSOC) : [];
         foreach ($rows as $row) {
-            if (strcasecmp((string)($row['name'] ?? ''), 'changed') === 0) {
+            if (strcasecmp((string)($row['name'] ?? $row['Field'] ?? ''), 'changed') === 0) {
                 return true;
             }
         }
@@ -531,7 +687,7 @@ final class XtMappingSyncService
         $env = (int)env('XT_MAPPING_BATCH_SIZE', 0);
         $fallback = $env > 0 ? $env : 2000;
         try {
-            $pdo->exec('CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)');
+            $pdo->exec($this->settingsCreateSql($pdo));
             $stmt = $pdo->prepare('SELECT value FROM settings WHERE key = :key');
             $stmt->execute([':key' => 'xt_mapping_batch_size']);
             $value = $stmt->fetchColumn();
@@ -554,7 +710,7 @@ final class XtMappingSyncService
     {
         $env = (string)env('DEBUG', '');
         try {
-            $pdo->exec('CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)');
+            $pdo->exec($this->settingsCreateSql($pdo));
             $stmt = $pdo->prepare('SELECT value FROM settings WHERE key = :key');
             $stmt->execute([':key' => 'xt_debug_enabled']);
             $value = $stmt->fetchColumn();
@@ -952,7 +1108,7 @@ final class XtMappingSyncService
         $cols[] = 'changed';
         $params[':changed'] = 1;
 
-        $sql = 'INSERT OR IGNORE INTO ' . $this->quoteIdentifier($table) .
+        $sql = ($this->isMysql($pdo) ? 'INSERT IGNORE INTO ' : 'INSERT OR IGNORE INTO ') . $this->quoteIdentifier($table) .
             ' (' . implode(',', array_map([$this, 'quoteIdentifier'], $cols)) . ')'
             . ' VALUES (' . implode(',', array_keys($params)) . ')';
         $stmt = $pdo->prepare($sql);
@@ -1346,16 +1502,17 @@ final class XtMappingSyncService
                 continue;
             }
             if ($autoPk !== null && $col === $autoPk) {
-                $defs[] = $this->quoteIdentifier($col) . ' INTEGER PRIMARY KEY AUTOINCREMENT';
+                $defs[] = $this->quoteIdentifier($col) . ' ' . ($this->isMysql($pdo) ? 'INT AUTO_INCREMENT PRIMARY KEY' : 'INTEGER PRIMARY KEY AUTOINCREMENT');
                 continue;
             }
-            $defs[] = $this->quoteIdentifier($col) . ' TEXT';
+            $defs[] = $this->quoteIdentifier($col) . ' ' . $this->inferCreateColumnType($pdo, $col, in_array($col, $pk, true));
         }
-        $defs[] = 'changed INTEGER NOT NULL DEFAULT 0';
+        $defs[] = 'changed ' . ($this->isMysql($pdo) ? 'TINYINT NOT NULL DEFAULT 0' : 'INTEGER NOT NULL DEFAULT 0');
         if ($autoPk === null && count($pk) === 1 && $pk[0] !== '') {
             $defs[] = 'PRIMARY KEY (' . $this->quoteIdentifier($pk[0]) . ')';
         }
-        $pdo->exec('CREATE TABLE IF NOT EXISTS ' . $this->quoteIdentifier($table) . ' (' . implode(',', $defs) . ')');
+        $suffix = $this->isMysql($pdo) ? ' ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci' : '';
+        $pdo->exec('CREATE TABLE IF NOT EXISTS ' . $this->quoteIdentifier($table) . ' (' . implode(',', $defs) . ')' . $suffix);
     }
 
     private function ensureColumns(PDO $pdo, string $table, array $columns, array $existing): void
@@ -1367,7 +1524,7 @@ final class XtMappingSyncService
             if (isset($existing[strtolower($col)])) {
                 continue;
             }
-            $pdo->exec('ALTER TABLE ' . $this->quoteIdentifier($table) . ' ADD COLUMN ' . $this->quoteIdentifier($col) . ' TEXT');
+            $pdo->exec('ALTER TABLE ' . $this->quoteIdentifier($table) . ' ADD COLUMN ' . $this->quoteIdentifier($col) . ' ' . $this->inferCreateColumnType($pdo, $col, false));
         }
     }
 
@@ -1376,16 +1533,14 @@ final class XtMappingSyncService
      */
     private function getExistingColumns(PDO $pdo, string $table): array
     {
-        $stmt = $pdo->query('SELECT name FROM sqlite_master WHERE type = "table" AND name = ' . $pdo->quote($table));
-        $exists = $stmt ? $stmt->fetchColumn() : false;
-        if (!$exists) {
+        if (!$this->tableExists($pdo, $table)) {
             return [];
         }
-        $stmt = $pdo->query('PRAGMA table_info(' . $this->quoteIdentifier($table) . ')');
+        $stmt = $this->describeTable($pdo, $table);
         $rows = $stmt ? $stmt->fetchAll(PDO::FETCH_ASSOC) : [];
         $cols = [];
         foreach ($rows as $row) {
-            $name = (string)($row['name'] ?? '');
+            $name = (string)($row['name'] ?? $row['Field'] ?? '');
             if ($name !== '') {
                 $cols[strtolower($name)] = true;
             }
@@ -1418,7 +1573,7 @@ final class XtMappingSyncService
 
     private function quoteIdentifier(string $name): string
     {
-        return '"' . str_replace('"', '""', $name) . '"';
+        return '`' . str_replace('`', '``', $name) . '`';
     }
 
     private function buildUpsertStatement(PDO $pdo, string $table, array $columns, array $existingCols, array $pkCols, array $compareCols): ?\PDOStatement
@@ -1463,8 +1618,20 @@ final class XtMappingSyncService
         }
         $where = $whereParts !== [] ? (' WHERE ' . implode(' OR ', $whereParts)) : '';
 
-        $sql = $insert . ' ON CONFLICT(' . implode(',', array_map([$this, 'quoteIdentifier'], $pkCols)) . ') DO UPDATE SET ' .
-            implode(', ', $setParts) . $where;
+        if ($this->isMysql($pdo)) {
+            $mysqlSetParts = [];
+            foreach ($columns as $col => $expr) {
+                if (!in_array($col, $cols, true) || $col === 'changed' || $this->isDefaultExpr((string)$expr)) {
+                    continue;
+                }
+                $mysqlSetParts[] = $this->quoteIdentifier($col) . ' = VALUES(' . $this->quoteIdentifier($col) . ')';
+            }
+            $mysqlSetParts[] = 'changed = 1';
+            $sql = $insert . ' ON DUPLICATE KEY UPDATE ' . implode(', ', $mysqlSetParts);
+        } else {
+            $sql = $insert . ' ON CONFLICT(' . implode(',', array_map([$this, 'quoteIdentifier'], $pkCols)) . ') DO UPDATE SET ' .
+                implode(', ', $setParts) . $where;
+        }
         return $pdo->prepare($sql);
     }
 
@@ -1508,35 +1675,10 @@ final class XtMappingSyncService
     private function ensurePkIndex(PDO $pdo, string $table, array $pkCols): void
     {
         $idx = 'idx_' . $table . '_pk';
-        $desired = array_map('strtolower', $pkCols);
-        $existing = null;
-
-        $list = $pdo->query('PRAGMA index_list(' . $this->quoteIdentifier($table) . ')');
-        if ($list) {
-            $rows = $list->fetchAll(PDO::FETCH_ASSOC) ?: [];
-            foreach ($rows as $row) {
-                if (($row['name'] ?? '') === $idx) {
-                    $info = $pdo->query('PRAGMA index_info(' . $this->quoteIdentifier($idx) . ')');
-                    if ($info) {
-                        $cols = $info->fetchAll(PDO::FETCH_ASSOC) ?: [];
-                        $existing = [];
-                        foreach ($cols as $c) {
-                            $existing[] = strtolower((string)($c['name'] ?? ''));
-                        }
-                    }
-                    break;
-                }
-            }
-        }
-
-        if ($existing !== null && $existing !== $desired) {
-            $pdo->exec('DROP INDEX IF EXISTS ' . $this->quoteIdentifier($idx));
-            $existing = null;
-        }
-
-        if ($existing === null) {
+        if (!$this->indexExists($pdo, $table, $idx)) {
             $cols = implode(',', array_map([$this, 'quoteIdentifier'], $pkCols));
-            $pdo->exec('CREATE UNIQUE INDEX IF NOT EXISTS ' . $idx . ' ON ' . $this->quoteIdentifier($table) . '(' . $cols . ')');
+            $sql = ($this->isMysql($pdo) ? 'CREATE UNIQUE INDEX ' : 'CREATE UNIQUE INDEX IF NOT EXISTS ') . $this->quoteIdentifier($idx) . ' ON ' . $this->quoteIdentifier($table) . '(' . $cols . ')';
+            $pdo->exec($sql);
         }
     }
 
@@ -1580,6 +1722,92 @@ final class XtMappingSyncService
         }
         $sql = 'UPDATE ' . $this->quoteIdentifier($table) . ' SET ' . implode(', ', $sets) . ' WHERE ' . $where;
         return $pdo->prepare($sql);
+    }
+
+    private function isMysql(PDO $pdo): bool
+    {
+        return (string)$pdo->getAttribute(PDO::ATTR_DRIVER_NAME) === 'mysql';
+    }
+
+    private function settingsCreateSql(PDO $pdo): string
+    {
+        return $this->isMysql($pdo)
+            ? 'CREATE TABLE IF NOT EXISTS settings (`key` VARCHAR(190) PRIMARY KEY, `value` TEXT) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci'
+            : 'CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)';
+    }
+
+    private function sourceCursorColumn(string $source): string
+    {
+        return match ($source) {
+            'attributes' => 'attributes_id',
+            default => 'id',
+        };
+    }
+
+    private function describeTable(PDO $pdo, string $table): ?\PDOStatement
+    {
+        return $this->isMysql($pdo)
+            ? $pdo->query('DESCRIBE ' . $this->quoteIdentifier($table))
+            : $pdo->query('PRAGMA table_info(' . $this->quoteIdentifier($table) . ')');
+    }
+
+    private function tableExists(PDO $pdo, string $table): bool
+    {
+        if ($this->isMysql($pdo)) {
+            $stmt = $pdo->prepare('SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = :table');
+            $stmt->execute([':table' => $table]);
+            return (int)$stmt->fetchColumn() > 0;
+        }
+        $stmt = $pdo->query('SELECT name FROM sqlite_master WHERE type = "table" AND name = ' . $pdo->quote($table));
+        return (bool)($stmt ? $stmt->fetchColumn() : false);
+    }
+
+    private function indexExists(PDO $pdo, string $table, string $index): bool
+    {
+        if ($this->isMysql($pdo)) {
+            $stmt = $pdo->prepare('SELECT COUNT(*) FROM information_schema.statistics WHERE table_schema = DATABASE() AND table_name = :table AND index_name = :idx');
+            $stmt->execute([':table' => $table, ':idx' => $index]);
+            return (int)$stmt->fetchColumn() > 0;
+        }
+        $list = $pdo->query('PRAGMA index_list(' . $this->quoteIdentifier($table) . ')');
+        $rows = $list ? $list->fetchAll(PDO::FETCH_ASSOC) : [];
+        foreach ($rows as $row) {
+            if (($row['name'] ?? '') === $index) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * @param array<int,string> $columns
+     */
+    private function createIndexIfMissing(PDO $pdo, string $index, string $table, array $columns): void
+    {
+        if ($this->indexExists($pdo, $table, $index)) {
+            return;
+        }
+        $cols = implode(',', array_map([$this, 'quoteIdentifier'], $columns));
+        $sql = ($this->isMysql($pdo) ? 'CREATE INDEX ' : 'CREATE INDEX IF NOT EXISTS ') . $this->quoteIdentifier($index) . ' ON ' . $this->quoteIdentifier($table) . '(' . $cols . ')';
+        $pdo->exec($sql);
+    }
+
+    private function inferCreateColumnType(PDO $pdo, string $column, bool $isKey): string
+    {
+        if (!$this->isMysql($pdo)) {
+            return 'TEXT';
+        }
+        $lower = strtolower($column);
+        if ($isKey || $lower === 'external_id' || str_ends_with($lower, '_id') || str_ends_with($lower, '_code') || $lower === 'language_code' || $lower === 'store_id' || $lower === 'url_md5') {
+            return 'VARCHAR(255)';
+        }
+        if ($lower === 'changed') {
+            return 'TINYINT';
+        }
+        if (str_contains($lower, 'status') || str_contains($lower, 'sort_order') || str_contains($lower, 'left') || str_contains($lower, 'right')) {
+            return 'INT';
+        }
+        return 'LONGTEXT';
     }
 
     private function bindValues(\PDOStatement $stmt, array $values, array $columns, array $existingCols, array $pkCols, array $autoCols, array $allowedCols = []): void

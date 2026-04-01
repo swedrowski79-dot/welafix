@@ -55,10 +55,12 @@ final class DocumentRepositorySqlite
         if ($this->documentColumns !== null) {
             return $this->documentColumns;
         }
-        $stmt = $this->pdo->query('PRAGMA table_info(documents)');
+        $stmt = $this->isMysql()
+            ? $this->pdo->query('DESCRIBE ' . $this->quoteIdentifier('documents'))
+            : $this->pdo->query('PRAGMA table_info(documents)');
         $cols = [];
         foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
-            $name = (string)($row['name'] ?? '');
+            $name = (string)($row['name'] ?? $row['Field'] ?? '');
             if ($name !== '') {
                 $cols[] = $name;
             }
@@ -72,6 +74,11 @@ final class DocumentRepositorySqlite
 
     private function quoteIdentifier(string $name): string
     {
-        return '"' . str_replace('"', '""', $name) . '"';
+        return '`' . str_replace('`', '``', $name) . '`';
+    }
+
+    private function isMysql(): bool
+    {
+        return (string)$this->pdo->getAttribute(PDO::ATTR_DRIVER_NAME) === 'mysql';
     }
 }

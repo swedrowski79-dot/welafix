@@ -12,7 +12,7 @@ final class DashboardController
 
     public function index(): void
     {
-        $pdo = $this->factory->sqlite();
+        $pdo = $this->factory->localDb();
 
         $counts = [
             'artikel_changed' => (int)$pdo->query("SELECT COUNT(*) FROM artikel WHERE changed = 1")->fetchColumn(),
@@ -32,7 +32,9 @@ final class DashboardController
     {
         $view = __DIR__ . '/../Views/sqlite_browser.php';
         $layout = __DIR__ . '/../Views/layout.php';
-        $data = [];
+        $data = [
+            'local_db_driver' => $this->factory->localDriver(),
+        ];
 
         require $layout;
     }

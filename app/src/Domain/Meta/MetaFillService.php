@@ -15,7 +15,7 @@ final class MetaFillService
      */
     public function run(): array
     {
-        $pdo = $this->factory->sqlite();
+        $pdo = $this->factory->localDb();
 
         $artikelRows = $pdo->query('SELECT * FROM artikel WHERE changed = 1 AND COALESCE(is_deleted,0) = 0')?->fetchAll(PDO::FETCH_ASSOC) ?: [];
         $artikelExtraRows = $pdo->query('SELECT * FROM artikel_extra_data')?->fetchAll(PDO::FETCH_ASSOC) ?: [];
@@ -28,24 +28,36 @@ final class MetaFillService
         $existingArtikel = $this->loadExistingMetaArtikel($pdo);
         $existingWarengruppen = $this->loadExistingMetaWarengruppen($pdo);
 
-        $artikelUpsert = $pdo->prepare(
-            'INSERT INTO Meta_Data_Artikel (afs_artikel_id, artikelnummer, meta_title, meta_description, updated)
-             VALUES (:afs_artikel_id, :artikelnummer, :meta_title, :meta_description, :updated)
-             ON CONFLICT(afs_artikel_id) DO UPDATE SET
+        $artikelUpsert = $pdo->prepare($this->isMysql($pdo)
+            ? 'INSERT INTO Meta_Data_Artikel (afs_artikel_id, artikelnummer, meta_title, meta_description, updated)
+               VALUES (:afs_artikel_id, :artikelnummer, :meta_title, :meta_description, :updated)
+               ON DUPLICATE KEY UPDATE
+               artikelnummer = VALUES(artikelnummer),
+               meta_title = VALUES(meta_title),
+               meta_description = VALUES(meta_description),
+               updated = VALUES(updated)'
+            : 'INSERT INTO Meta_Data_Artikel (afs_artikel_id, artikelnummer, meta_title, meta_description, updated)
+               VALUES (:afs_artikel_id, :artikelnummer, :meta_title, :meta_description, :updated)
+               ON CONFLICT(afs_artikel_id) DO UPDATE SET
                artikelnummer = excluded.artikelnummer,
                meta_title = excluded.meta_title,
                meta_description = excluded.meta_description,
-               updated = excluded.updated'
-        );
-        $warengruppeUpsert = $pdo->prepare(
-            'INSERT INTO Meta_Data_Waregruppen (afs_wg_id, warengruppenname, meta_title, meta_description, updated)
-             VALUES (:afs_wg_id, :warengruppenname, :meta_title, :meta_description, :updated)
-             ON CONFLICT(afs_wg_id) DO UPDATE SET
+               updated = excluded.updated');
+        $warengruppeUpsert = $pdo->prepare($this->isMysql($pdo)
+            ? 'INSERT INTO Meta_Data_Waregruppen (afs_wg_id, warengruppenname, meta_title, meta_description, updated)
+               VALUES (:afs_wg_id, :warengruppenname, :meta_title, :meta_description, :updated)
+               ON DUPLICATE KEY UPDATE
+               warengruppenname = VALUES(warengruppenname),
+               meta_title = VALUES(meta_title),
+               meta_description = VALUES(meta_description),
+               updated = VALUES(updated)'
+            : 'INSERT INTO Meta_Data_Waregruppen (afs_wg_id, warengruppenname, meta_title, meta_description, updated)
+               VALUES (:afs_wg_id, :warengruppenname, :meta_title, :meta_description, :updated)
+               ON CONFLICT(afs_wg_id) DO UPDATE SET
                warengruppenname = excluded.warengruppenname,
                meta_title = excluded.meta_title,
                meta_description = excluded.meta_description,
-               updated = excluded.updated'
-        );
+               updated = excluded.updated');
 
         $stats = [
             'ok' => true,
@@ -169,6 +181,11 @@ final class MetaFillService
         }
 
         return $stats;
+    }
+
+    private function isMysql(PDO $pdo): bool
+    {
+        return (string)$pdo->getAttribute(PDO::ATTR_DRIVER_NAME) === 'mysql';
     }
 
     /**

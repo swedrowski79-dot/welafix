@@ -20,7 +20,7 @@ final class AfsVisibilityReconcileService
     public function run(): array
     {
         $mssql = Db::guardMssql($this->factory->mssql(), __METHOD__ . ':mssql');
-        $sqlite = Db::guardSqlite($this->factory->sqlite(), __METHOD__ . ':sqlite');
+        $sqlite = $this->factory->localDb();
         $mappings = (new MappingLoader())->loadAll();
 
         $stats = [
@@ -127,6 +127,6 @@ final class AfsVisibilityReconcileService
 
     private function quoteIdentifier(string $name): string
     {
-        return '"' . str_replace('"', '""', $name) . '"';
+        return '`' . str_replace('`', '``', $name) . '`';
     }
 }

@@ -38,7 +38,7 @@ final class DokumentSyncService
         $mapping['select'] = $selectFields;
 
         $mssql = Db::guardMssql(Db::mssql(), __METHOD__);
-        $sqlite = Db::guardSqlite(Db::sqlite(), __METHOD__);
+        $sqlite = Db::localDb();
 
         $this->schemaSync->ensureSqliteColumnsMatchMssql($mssql, $sqlite, 'dbo.Dokument', 'documents', $selectFields);
         $this->ensureExtraColumns($sqlite);
@@ -48,6 +48,7 @@ final class DokumentSyncService
         $rows = $repo->fetchAllByMapping($mapping, $deltaOnly);
         $this->lastSql = $repo->getLastSql();
         $afsQueue = new AfsUpdateQueue($sqlite);
+        $afsQueue->ensureTable();
 
         $stats = [
             'ok' => true,
@@ -124,7 +125,9 @@ final class DokumentSyncService
             }
             $sqlite->commit();
         } catch (\Throwable $e) {
-            $sqlite->rollBack();
+            if ($sqlite->inTransaction()) {
+                $sqlite->rollBack();
+            }
             $this->logSqlError($e, $insert->queryString ?? null, $params ?? null);
             throw $e;
         }
@@ -163,9 +166,9 @@ final class DokumentSyncService
     private function ensureExtraColumns(PDO $pdo): void
     {
         $extra = [
-            'changed' => 'INTEGER DEFAULT 0',
-            'last_seen_at' => 'TEXT NULL',
-            'is_deleted' => 'INTEGER DEFAULT 0',
+            'changed' => $this->isMysql($pdo) ? 'TINYINT DEFAULT 0' : 'INTEGER DEFAULT 0',
+            'last_seen_at' => $this->isMysql($pdo) ? 'VARCHAR(64) NULL' : 'TEXT NULL',
+            'is_deleted' => $this->isMysql($pdo) ? 'TINYINT DEFAULT 0' : 'INTEGER DEFAULT 0',
         ];
         foreach ($extra as $column => $type) {
             if (!$this->schemaHelper->columnExists($pdo, 'documents', $column)) {
@@ -240,7 +243,12 @@ final class DokumentSyncService
 
     private function quoteIdentifier(string $name): string
     {
-        return '"' . str_replace('"', '""', $name) . '"';
+        return '`' . str_replace('`', '``', $name) . '`';
+    }
+
+    private function isMysql(PDO $pdo): bool
+    {
+        return (string)$pdo->getAttribute(PDO::ATTR_DRIVER_NAME) === 'mysql';
     }
 
     /**

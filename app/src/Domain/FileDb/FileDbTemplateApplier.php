@@ -17,6 +17,9 @@ final class FileDbTemplateApplier
     private array $columnCache = [];
     /** @var array<string, \PDOStatement> */
     private array $updateCache = [];
+    /** @var array<string, \PDOStatement> */
+    private array $selectCache = [];
+    private ?bool $isMysql = null;
 
     public function __construct(?string $basePath = null)
     {
@@ -28,7 +31,7 @@ final class FileDbTemplateApplier
     public function importArtikelDirectories(PDO $pdo): array
     {
         if (!$this->isReadEnabled()) {
-            return ['imported' => 0, 'directories' => 0];
+            return ['imported' => 0, 'changed' => 0, 'unchanged' => 0, 'directories' => 0];
         }
         return $this->importDirectories($pdo, $this->baseArtikel, 'artikel_extra_data', 'Artikelnummer');
     }
@@ -36,7 +39,7 @@ final class FileDbTemplateApplier
     public function importWarengruppeDirectories(PDO $pdo): array
     {
         if (!$this->isReadEnabled()) {
-            return ['imported' => 0, 'directories' => 0];
+            return ['imported' => 0, 'changed' => 0, 'unchanged' => 0, 'directories' => 0];
         }
         return $this->importDirectories($pdo, $this->baseWarengruppe, 'warengruppe_extra_data', 'warengruppenname');
     }
@@ -97,17 +100,25 @@ final class FileDbTemplateApplier
         $columns = array_keys($values);
         $cacheKey = $table . '|' . implode(',', $columns) . '|' . $keyColumn . '|upsert';
         if (!isset($this->updateCache[$cacheKey])) {
-            $insertColumns = [$this->quoteIdentifier($keyColumn)];
+            $insertColumns = [$this->quoteIdentifier($keyColumn, $pdo)];
             $insertParams = [':_key'];
             $updates = [];
             foreach ($columns as $col) {
-                $insertColumns[] = $this->quoteIdentifier($col);
+                $insertColumns[] = $this->quoteIdentifier($col, $pdo);
                 $insertParams[] = ':' . $col;
-                $updates[] = $this->quoteIdentifier($col) . ' = excluded.' . $this->quoteIdentifier($col);
+                if ($this->isMysql($pdo)) {
+                    $updates[] = $this->quoteIdentifier($col, $pdo) . ' = VALUES(' . $this->quoteIdentifier($col, $pdo) . ')';
+                } else {
+                    $updates[] = $this->quoteIdentifier($col, $pdo) . ' = excluded.' . $this->quoteIdentifier($col, $pdo);
+                }
             }
-            $sql = 'INSERT INTO ' . $this->quoteIdentifier($table) .
-                ' (' . implode(', ', $insertColumns) . ') VALUES (' . implode(', ', $insertParams) . ')' .
-                ' ON CONFLICT(' . $this->quoteIdentifier($keyColumn) . ') DO UPDATE SET ' . implode(', ', $updates);
+            $sql = 'INSERT INTO ' . $this->quoteIdentifier($table, $pdo) .
+                ' (' . implode(', ', $insertColumns) . ') VALUES (' . implode(', ', $insertParams) . ')';
+            if ($this->isMysql($pdo)) {
+                $sql .= ' ON DUPLICATE KEY UPDATE ' . implode(', ', $updates);
+            } else {
+                $sql .= ' ON CONFLICT(' . $this->quoteIdentifier($keyColumn, $pdo) . ') DO UPDATE SET ' . implode(', ', $updates);
+            }
             $this->updateCache[$cacheKey] = $pdo->prepare($sql);
         }
 
@@ -120,21 +131,23 @@ final class FileDbTemplateApplier
     }
 
     /**
-     * @return array{imported:int,directories:int}
+     * @return array{imported:int,changed:int,unchanged:int,directories:int}
      */
     private function importDirectories(PDO $pdo, string $baseDir, string $table, string $keyColumn): array
     {
         if (!is_dir($baseDir)) {
-            return ['imported' => 0, 'directories' => 0];
+            return ['imported' => 0, 'changed' => 0, 'unchanged' => 0, 'directories' => 0];
         }
 
         $items = scandir($baseDir);
         if (!is_array($items)) {
-            return ['imported' => 0, 'directories' => 0];
+            return ['imported' => 0, 'changed' => 0, 'unchanged' => 0, 'directories' => 0];
         }
 
         $directories = 0;
         $imported = 0;
+        $changed = 0;
+        $unchanged = 0;
         foreach ($items as $item) {
             if ($item === '.' || $item === '..') {
                 continue;
@@ -151,12 +164,18 @@ final class FileDbTemplateApplier
             }
 
             $values = $templates;
+            $existing = $this->fetchExistingRow($pdo, $table, $keyColumn, $item);
+            if ($this->rowsMatch($existing, $values)) {
+                $unchanged++;
+                continue;
+            }
             $values['updated_at'] = $this->nowIso();
             $this->upsertRow($pdo, $table, $keyColumn, $item, $values);
             $imported++;
+            $changed++;
         }
 
-        return ['imported' => $imported, 'directories' => $directories];
+        return ['imported' => $imported, 'changed' => $changed, 'unchanged' => $unchanged, 'directories' => $directories];
     }
 
     /**
@@ -165,11 +184,15 @@ final class FileDbTemplateApplier
     private function ensureColumns(PDO $pdo, string $table, array $columns): void
     {
         if (!isset($this->columnCache[$table])) {
-            $stmt = $pdo->query('PRAGMA table_info(' . $this->quoteIdentifier($table) . ')');
+            if ($this->isMysql($pdo)) {
+                $stmt = $pdo->query('DESCRIBE ' . $this->quoteIdentifier($table, $pdo));
+            } else {
+                $stmt = $pdo->query('PRAGMA table_info(' . $this->quoteIdentifier($table, $pdo) . ')');
+            }
             $rows = $stmt ? $stmt->fetchAll(PDO::FETCH_ASSOC) : [];
             $map = [];
             foreach ($rows as $row) {
-                $name = strtolower((string)($row['name'] ?? ''));
+                $name = strtolower((string)($row['name'] ?? $row['Field'] ?? ''));
                 if ($name !== '') {
                     $map[$name] = true;
                 }
@@ -182,7 +205,10 @@ final class FileDbTemplateApplier
             if (isset($this->columnCache[$table][$key])) {
                 continue;
             }
-            $pdo->exec('ALTER TABLE ' . $this->quoteIdentifier($table) . ' ADD COLUMN ' . $this->quoteIdentifier($col) . ' TEXT');
+            $pdo->exec(
+                'ALTER TABLE ' . $this->quoteIdentifier($table) . ' ADD COLUMN ' .
+                $this->quoteIdentifier($col, $pdo) . ' ' . ($this->isMysql($pdo) ? 'LONGTEXT' : 'TEXT')
+            );
             $this->columnCache[$table][$key] = true;
         }
     }
@@ -205,13 +231,77 @@ final class FileDbTemplateApplier
         }
     }
 
+    /**
+     * @return array<string, mixed>|null
+     */
+    private function fetchExistingRow(PDO $pdo, string $table, string $keyColumn, string $keyValue): ?array
+    {
+        $cacheKey = $table . '|' . $keyColumn . '|select';
+        if (!isset($this->selectCache[$cacheKey])) {
+            $sql = 'SELECT * FROM ' . $this->quoteIdentifier($table, $pdo) .
+                ' WHERE ' . $this->quoteIdentifier($keyColumn, $pdo) . ' = :_key LIMIT 1';
+            $this->selectCache[$cacheKey] = $pdo->prepare($sql);
+        }
+        $stmt = $this->selectCache[$cacheKey];
+        $stmt->bindValue(':_key', $keyValue, PDO::PARAM_STR);
+        $stmt->execute();
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+        return is_array($row) ? $row : null;
+    }
+
+    /**
+     * @param array<string, mixed>|null $existing
+     * @param array<string, string> $values
+     */
+    private function rowsMatch(?array $existing, array $values): bool
+    {
+        if ($existing === null) {
+            return false;
+        }
+        foreach ($values as $key => $value) {
+            $matched = false;
+            foreach ($existing as $existingKey => $existingValue) {
+                if (strcasecmp((string)$existingKey, $key) !== 0) {
+                    continue;
+                }
+                $matched = true;
+                if (trim((string)$existingValue) !== trim((string)$value)) {
+                    return false;
+                }
+                break;
+            }
+            if (!$matched && trim($value) !== '') {
+                return false;
+            }
+        }
+        return true;
+    }
+
     private function nowIso(): string
     {
         return (new DateTimeImmutable('now', new DateTimeZone('UTC')))->format(DATE_ATOM);
     }
 
-    private function quoteIdentifier(string $name): string
+    private function quoteIdentifier(string $name, ?PDO $pdo = null): string
     {
+        if ($pdo !== null && $this->isMysql($pdo)) {
+            return '`' . str_replace('`', '``', $name) . '`';
+        }
+        if ($pdo === null && $this->isMysql()) {
+            return '`' . str_replace('`', '``', $name) . '`';
+        }
         return '"' . str_replace('"', '""', $name) . '"';
+    }
+
+    private function isMysql(?PDO $pdo = null): bool
+    {
+        if ($this->isMysql !== null) {
+            return $this->isMysql;
+        }
+        if ($pdo === null) {
+            return false;
+        }
+        $this->isMysql = $pdo->getAttribute(PDO::ATTR_DRIVER_NAME) === 'mysql';
+        return $this->isMysql;
     }
 }

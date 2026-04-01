@@ -14,9 +14,8 @@ final class SqliteBrowserController
     public function tables(): void
     {
         try {
-            $pdo = $this->factory->sqlite();
-            $stmt = $pdo->query("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name");
-            $tables = $stmt->fetchAll(PDO::FETCH_COLUMN) ?: [];
+            $pdo = $this->factory->localDb();
+            $tables = $this->listTables($pdo);
             $this->jsonResponse($tables);
         } catch (\Throwable $e) {
             $this->jsonResponse([
@@ -28,7 +27,7 @@ final class SqliteBrowserController
     public function table(): void
     {
         try {
-            $pdo = $this->factory->sqlite();
+            $pdo = $this->factory->localDb();
 
             $name = isset($_GET['name']) ? trim((string)$_GET['name']) : '';
             if ($name === '') {
@@ -101,14 +100,19 @@ final class SqliteBrowserController
             $page = max(1, $page);
             $perPage = max(1, min(200, $perPage));
             $offset = ($page - 1) * $perPage;
+            $driver = (string)$pdo->getAttribute(PDO::ATTR_DRIVER_NAME);
+            $primaryKey = $this->resolvePrimaryKeyColumn($tableInfo);
 
-            $search = $this->buildSearch($columns, $textColumns, $q);
+            $search = $this->buildSearch($columns, $textColumns, $q, $driver);
             $whereSql = $search['where'];
             $params = $search['params'];
 
             $tableId = $this->quoteIdentifier($name);
             $columnList = array_map([$this, 'quoteIdentifier'], $columns);
-            $selectSql = 'SELECT rowid AS "__rowid", ' . implode(', ', $columnList) . " FROM {$tableId}";
+            $selectPrefix = $primaryKey !== null
+                ? $this->quoteIdentifier($primaryKey) . ' AS "__rowid", '
+                : '';
+            $selectSql = 'SELECT ' . $selectPrefix . implode(', ', $columnList) . " FROM {$tableId}";
             $countSql = "SELECT COUNT(*) FROM {$tableId}";
             if ($whereSql !== '') {
                 $selectSql .= ' WHERE ' . $whereSql;
@@ -143,6 +147,7 @@ final class SqliteBrowserController
                 'table' => $name,
                 'columns' => $columns,
                 'rows' => $rows,
+                'primary_key' => $primaryKey,
                 'page' => $page,
                 'per_page' => $perPage,
                 'totalRows' => $totalRows,
@@ -162,7 +167,7 @@ final class SqliteBrowserController
     public function clearTable(): void
     {
         try {
-            $pdo = $this->factory->sqlite();
+            $pdo = $this->factory->localDb();
 
             $name = isset($_GET['name']) ? trim((string)$_GET['name']) : '';
             if ($name === '') {
@@ -195,7 +200,7 @@ final class SqliteBrowserController
     public function dropTable(): void
     {
         try {
-            $pdo = $this->factory->sqlite();
+            $pdo = $this->factory->localDb();
 
             $name = isset($_GET['name']) ? trim((string)$_GET['name']) : '';
             if ($name === '') {
@@ -228,7 +233,7 @@ final class SqliteBrowserController
     public function updateCell(): void
     {
         try {
-            $pdo = $this->factory->sqlite();
+            $pdo = $this->factory->localDb();
 
             $name = isset($_POST['name']) ? trim((string)$_POST['name']) : '';
             $column = isset($_POST['column']) ? trim((string)$_POST['column']) : '';
@@ -261,8 +266,12 @@ final class SqliteBrowserController
                 return;
             }
 
-            $rowId = (int)$rowIdRaw;
-            if ($rowId <= 0) {
+            $primaryKey = $this->resolvePrimaryKeyColumn($tableInfo);
+            if ($primaryKey === null) {
+                $this->jsonResponse(['error' => 'Tabelle hat keinen bearbeitbaren Primärschlüssel.', 'sql' => null, 'params' => null], 400);
+                return;
+            }
+            if ($rowIdRaw === '') {
                 $this->jsonResponse(['error' => 'Ungültige rowid.', 'sql' => null, 'params' => null], 400);
                 return;
             }
@@ -270,17 +279,18 @@ final class SqliteBrowserController
             $actualColumn = $allowedColumns[$columnKey];
             $stmt = $pdo->prepare(
                 'UPDATE ' . $this->quoteIdentifier($name) .
-                ' SET ' . $this->quoteIdentifier($actualColumn) . ' = :value WHERE rowid = :rowid'
+                ' SET ' . $this->quoteIdentifier($actualColumn) . ' = :value WHERE ' . $this->quoteIdentifier($primaryKey) . ' = :rowid'
             );
             $stmt->bindValue(':value', (string)$value, PDO::PARAM_STR);
-            $stmt->bindValue(':rowid', $rowId, PDO::PARAM_INT);
+            $stmt->bindValue(':rowid', $rowIdRaw, PDO::PARAM_STR);
             $stmt->execute();
 
             $this->jsonResponse([
                 'ok' => true,
                 'table' => $name,
                 'column' => $actualColumn,
-                'rowid' => $rowId,
+                'rowid' => $rowIdRaw,
+                'primary_key' => $primaryKey,
                 'value' => (string)$value,
             ]);
         } catch (\Throwable $e) {
@@ -297,10 +307,8 @@ final class SqliteBrowserController
      */
     private function getAllowedTables(PDO $pdo): array
     {
-        $stmt = $pdo->query("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'");
-        $tables = $stmt->fetchAll(PDO::FETCH_COLUMN) ?: [];
         $allowed = [];
-        foreach ($tables as $table) {
+        foreach ($this->listTables($pdo) as $table) {
             $allowed[(string)$table] = true;
         }
         return $allowed;
@@ -311,7 +319,21 @@ final class SqliteBrowserController
      */
     private function getTableInfo(PDO $pdo, string $table): array
     {
+        $driver = (string)$pdo->getAttribute(PDO::ATTR_DRIVER_NAME);
         $tableId = $this->quoteIdentifier($table);
+
+        if ($driver === 'mysql') {
+            $stmt = $pdo->query('DESCRIBE ' . $tableId);
+            $rows = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+            return array_map(static function (array $row): array {
+                return [
+                    'name' => (string)($row['Field'] ?? ''),
+                    'type' => (string)($row['Type'] ?? ''),
+                    'pk' => (string)($row['Key'] ?? '') === 'PRI' ? 1 : 0,
+                ];
+            }, $rows);
+        }
+
         $stmt = $pdo->query("PRAGMA table_info({$tableId})");
         return $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
     }
@@ -321,7 +343,7 @@ final class SqliteBrowserController
      * @param array<int, string> $textColumns
      * @return array{where: string, params: array<string, string>}
      */
-    private function buildSearch(array $columns, array $textColumns, string $query): array
+    private function buildSearch(array $columns, array $textColumns, string $query, string $driver): array
     {
         if ($query === '') {
             return ['where' => '', 'params' => []];
@@ -342,7 +364,9 @@ final class SqliteBrowserController
         foreach ($searchable as $column) {
             $colId = $this->quoteIdentifier($column);
             if ($useCastFallback) {
-                $parts[] = "CAST({$colId} AS TEXT) LIKE :q";
+                $parts[] = $driver === 'mysql'
+                    ? "CAST({$colId} AS CHAR) LIKE :q"
+                    : "CAST({$colId} AS TEXT) LIKE :q";
             } else {
                 $parts[] = "{$colId} LIKE :q";
             }
@@ -379,7 +403,37 @@ final class SqliteBrowserController
 
     private function quoteIdentifier(string $name): string
     {
-        return '"' . str_replace('"', '""', $name) . '"';
+        return '`' . str_replace('`', '``', $name) . '`';
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    private function listTables(PDO $pdo): array
+    {
+        $driver = (string)$pdo->getAttribute(PDO::ATTR_DRIVER_NAME);
+        if ($driver === 'mysql') {
+            $stmt = $pdo->query('SHOW TABLES');
+            $tables = $stmt->fetchAll(PDO::FETCH_COLUMN) ?: [];
+            sort($tables, SORT_STRING);
+            return $tables;
+        }
+
+        $stmt = $pdo->query("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name");
+        return $stmt->fetchAll(PDO::FETCH_COLUMN) ?: [];
+    }
+
+    private function resolvePrimaryKeyColumn(array $tableInfo): ?string
+    {
+        foreach ($tableInfo as $row) {
+            if ((int)($row['pk'] ?? 0) > 0) {
+                $name = trim((string)($row['name'] ?? ''));
+                if ($name !== '') {
+                    return $name;
+                }
+            }
+        }
+        return null;
     }
 
     private function jsonResponse(array $payload, int $status = 200): void

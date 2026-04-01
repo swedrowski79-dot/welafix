@@ -31,20 +31,25 @@ final class DailyDeltaSyncService
         ];
 
         $start = microtime(true);
-        $pdo = $this->factory->sqlite();
-        $pdo->exec('PRAGMA busy_timeout = 5000');
+        $pdo = $this->factory->localDb();
+        if ((string)$pdo->getAttribute(\PDO::ATTR_DRIVER_NAME) === 'sqlite') {
+            $pdo->exec('PRAGMA busy_timeout = 5000');
+        }
         $applier = new FileDbTemplateApplier();
         $fileDbStats = [
             'ok' => true,
             'filedb_mode' => strtolower((string)env('FILEDB_MODE', 'read')),
         ];
-        $pdo->beginTransaction();
+        $useTransaction = (string)$pdo->getAttribute(\PDO::ATTR_DRIVER_NAME) === 'sqlite';
+        if ($useTransaction) {
+            $pdo->beginTransaction();
+        }
         try {
-            $pdo->exec('DELETE FROM artikel_extra_data');
-            $pdo->exec('DELETE FROM warengruppe_extra_data');
             $fileDbStats['artikel'] = $applier->importArtikelDirectories($pdo);
             $fileDbStats['warengruppe'] = $applier->importWarengruppeDirectories($pdo);
-            $pdo->commit();
+            if ($useTransaction && $pdo->inTransaction()) {
+                $pdo->commit();
+            }
         } catch (\Throwable $e) {
             if ($pdo->inTransaction()) {
                 $pdo->rollBack();
@@ -105,15 +110,39 @@ final class DailyDeltaSyncService
         $stats['steps']['reconcile_deletes'] = $reconcile->run();
         $stats['steps']['reconcile_deletes']['duration_ms'] = (int)round((microtime(true) - $start) * 1000);
 
-        $start = microtime(true);
-        $xtMapping = new XtMappingSyncService();
-        $stats['steps']['xt_mapping'] = $xtMapping->run('welafix_xt');
-        $stats['steps']['xt_mapping']['duration_ms'] = (int)round((microtime(true) - $start) * 1000);
+        if ($this->hasPendingXtSourceChanges($pdo)) {
+            $start = microtime(true);
+            $xtMapping = new XtMappingSyncService();
+            $stats['steps']['xt_mapping'] = $xtMapping->run('welafix_xt');
+            $stats['steps']['xt_mapping']['duration_ms'] = (int)round((microtime(true) - $start) * 1000);
 
-        $start = microtime(true);
-        $xtApply = new XtApiApplyService($this->factory);
-        $stats['steps']['xt_apply'] = $xtApply->run('welafix_xt');
-        $stats['steps']['xt_apply']['duration_ms'] = (int)round((microtime(true) - $start) * 1000);
+            if ($this->hasPendingXtTargetChanges($pdo) || $this->hasPendingFileUploads($pdo)) {
+                $start = microtime(true);
+                $xtApply = new XtApiApplyService($this->factory);
+                $stats['steps']['xt_apply'] = $xtApply->run('welafix_xt');
+                $stats['steps']['xt_apply']['duration_ms'] = (int)round((microtime(true) - $start) * 1000);
+            } else {
+                $stats['steps']['xt_apply'] = [
+                    'ok' => true,
+                    'skipped' => true,
+                    'reason' => 'no_target_changes',
+                    'duration_ms' => 0,
+                ];
+            }
+        } else {
+            $stats['steps']['xt_mapping'] = [
+                'ok' => true,
+                'skipped' => true,
+                'reason' => 'no_source_changes',
+                'duration_ms' => 0,
+            ];
+            $stats['steps']['xt_apply'] = [
+                'ok' => true,
+                'skipped' => true,
+                'reason' => 'no_source_changes',
+                'duration_ms' => 0,
+            ];
+        }
 
         $start = microtime(true);
         $reset = new AfsUpdateResetService($this->factory);
@@ -128,14 +157,88 @@ final class DailyDeltaSyncService
      */
     private function markSourcesChangedAfterFileDb(\PDO $pdo, array $fileDbStats): void
     {
-        $artikelImported = (int)($fileDbStats['artikel']['imported'] ?? 0);
-        $warengruppeImported = (int)($fileDbStats['warengruppe']['imported'] ?? 0);
+        $artikelChanged = (int)($fileDbStats['artikel']['changed'] ?? 0);
+        $warengruppeChanged = (int)($fileDbStats['warengruppe']['changed'] ?? 0);
 
-        if ($artikelImported > 0) {
+        if ($artikelChanged > 0) {
             $pdo->exec('UPDATE artikel SET changed = 1 WHERE COALESCE(is_deleted, 0) = 0');
         }
-        if ($warengruppeImported > 0) {
+        if ($warengruppeChanged > 0) {
             $pdo->exec('UPDATE warengruppe SET changed = 1 WHERE COALESCE(is_deleted, 0) = 0');
+        }
+    }
+
+    private function hasPendingXtSourceChanges(\PDO $pdo): bool
+    {
+        foreach ([
+            'artikel',
+            'warengruppe',
+            'media',
+            'attributes',
+            'artikel_attribute_map',
+            'artikel_media_map',
+            'artikel_warengruppe',
+            'Meta_Data_Artikel',
+            'Meta_Data_Waregruppen',
+        ] as $table) {
+            if ($this->tableHasChangedRows($pdo, $table)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private function hasPendingXtTargetChanges(\PDO $pdo): bool
+    {
+        foreach ([
+            'xt_products',
+            'xt_products_description',
+            'xt_categories',
+            'xt_categories_description',
+            'xt_media',
+            'xt_media_description',
+            'xt_plg_products_attributes',
+            'xt_plg_products_attributes_description',
+            'xt_plg_products_to_attributes',
+            'xt_media_link',
+            'xt_products_to_categories',
+            'xt_seo_url',
+        ] as $table) {
+            if ($this->tableHasChangedRows($pdo, $table)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private function hasPendingFileUploads(\PDO $pdo): bool
+    {
+        try {
+            $stmt = $pdo->query(
+                "SELECT 1
+                 FROM `media`
+                 WHERE `changed` = 1
+                   AND COALESCE(`is_deleted`, 0) = 0
+                   AND `storage_path` IS NOT NULL
+                   AND CAST(`storage_path` AS CHAR) <> ''
+                   AND `checksum` IS NOT NULL
+                   AND `checksum` <> ''
+                   AND `checksum` <> 'notFound'
+                 LIMIT 1"
+            );
+            return $stmt ? $stmt->fetchColumn() !== false : false;
+        } catch (\Throwable) {
+            return false;
+        }
+    }
+
+    private function tableHasChangedRows(\PDO $pdo, string $table): bool
+    {
+        try {
+            $stmt = $pdo->query('SELECT 1 FROM `' . str_replace('`', '``', $table) . '` WHERE `changed` = 1 LIMIT 1');
+            return $stmt ? $stmt->fetchColumn() !== false : false;
+        } catch (\Throwable) {
+            return false;
         }
     }
 }

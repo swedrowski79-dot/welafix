@@ -18,7 +18,7 @@ final class MediaFilenameImporter
      */
     public function importFromAfs(): array
     {
-        $sqlite = Db::guardSqlite(Db::sqlite(), __METHOD__);
+        $pdo = $this->factory->localDb();
 
         $now = (new DateTimeImmutable('now', new DateTimeZone('UTC')))->format(DATE_ATOM);
         $stats = [
@@ -35,7 +35,7 @@ final class MediaFilenameImporter
             $articleFields[] = 'Bild' . $i;
         }
         $articleSql = 'SELECT ' . implode(', ', array_map([$this, 'quoteIdentifier'], $articleFields)) . ' FROM artikel WHERE changed = 1 AND COALESCE(is_deleted, 0) = 0';
-        $stmt = $sqlite->query($articleSql);
+        $stmt = $pdo->query($articleSql);
         while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
             foreach ($articleFields as $field) {
                 $stats['found']++;
@@ -50,7 +50,7 @@ final class MediaFilenameImporter
 
         $wgFields = ['Bild', 'Bild_gross'];
         $wgSql = 'SELECT ' . implode(', ', array_map([$this, 'quoteIdentifier'], $wgFields)) . ' FROM warengruppe WHERE changed = 1 AND COALESCE(is_deleted, 0) = 0';
-        $stmt = $sqlite->query($wgSql);
+        $stmt = $pdo->query($wgSql);
         while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
             foreach ($wgFields as $field) {
                 $stats['found']++;
@@ -67,12 +67,13 @@ final class MediaFilenameImporter
 
         $stats['unique'] = count($map);
 
-        $insert = $sqlite->prepare(
-            'INSERT OR IGNORE INTO media (filename, source, created_at, changed)
-             VALUES (:filename, :source, :created_at, 1)'
+        $insert = $pdo->prepare(
+            $this->isMysql($pdo)
+                ? 'INSERT IGNORE INTO media (filename, source, created_at, changed) VALUES (:filename, :source, :created_at, 1)'
+                : 'INSERT OR IGNORE INTO media (filename, source, created_at, changed) VALUES (:filename, :source, :created_at, 1)'
         );
 
-        $sqlite->beginTransaction();
+        $pdo->beginTransaction();
         try {
             foreach ($map as $item) {
                 $insert->execute([
@@ -84,9 +85,11 @@ final class MediaFilenameImporter
                     $stats['inserted']++;
                 }
             }
-            $sqlite->commit();
+            $pdo->commit();
         } catch (\Throwable $e) {
-            $sqlite->rollBack();
+            if ($pdo->inTransaction()) {
+                $pdo->rollBack();
+            }
             throw $e;
         }
 
@@ -98,7 +101,7 @@ final class MediaFilenameImporter
      */
     public function importFromDocuments(): array
     {
-        $sqlite = Db::guardSqlite(Db::sqlite(), __METHOD__);
+        $pdo = $this->factory->localDb();
 
         $now = (new DateTimeImmutable('now', new DateTimeZone('UTC')))->format(DATE_ATOM);
         $stats = [
@@ -112,7 +115,7 @@ final class MediaFilenameImporter
         ];
 
         $table = 'documents';
-        $column = $this->findColumn($sqlite, $table, ['Titel', 'titel']);
+        $column = $this->findColumn($pdo, $table, ['Titel', 'titel']);
         if ($column === null) {
             $stats['ok'] = false;
             $stats['error'] = 'Titel-Spalte nicht gefunden';
@@ -122,7 +125,7 @@ final class MediaFilenameImporter
         $stats['table'] = $table;
         $stats['column'] = $column;
 
-        $stmt = $sqlite->query(
+        $stmt = $pdo->query(
             'SELECT ' . $this->quoteIdentifier($column) . ' FROM ' . $this->quoteIdentifier($table) . ' WHERE changed = 1 AND COALESCE(is_deleted, 0) = 0'
         );
         $map = [];
@@ -140,12 +143,13 @@ final class MediaFilenameImporter
 
         $stats['unique'] = count($map);
 
-        $insert = $sqlite->prepare(
-            'INSERT OR IGNORE INTO media (filename, source, type, created_at, changed)
-             VALUES (:filename, :source, :type, :created_at, 1)'
+        $insert = $pdo->prepare(
+            $this->isMysql($pdo)
+                ? 'INSERT IGNORE INTO media (filename, source, type, created_at, changed) VALUES (:filename, :source, :type, :created_at, 1)'
+                : 'INSERT OR IGNORE INTO media (filename, source, type, created_at, changed) VALUES (:filename, :source, :type, :created_at, 1)'
         );
 
-        $sqlite->beginTransaction();
+        $pdo->beginTransaction();
         try {
             foreach ($map as $filename) {
                 $insert->execute([
@@ -160,9 +164,11 @@ final class MediaFilenameImporter
                     $stats['skipped']++;
                 }
             }
-            $sqlite->commit();
+            $pdo->commit();
         } catch (\Throwable $e) {
-            $sqlite->rollBack();
+            if ($pdo->inTransaction()) {
+                $pdo->rollBack();
+            }
             throw $e;
         }
 
@@ -171,14 +177,16 @@ final class MediaFilenameImporter
 
     private function findColumn(PDO $pdo, string $table, array $names): ?string
     {
-        $stmt = $pdo->query('PRAGMA table_info(' . $this->quoteIdentifier($table) . ')');
+        $stmt = $this->isMysql($pdo)
+            ? $pdo->query('DESCRIBE ' . $this->quoteIdentifier($table))
+            : $pdo->query('PRAGMA table_info(' . $this->quoteIdentifier($table) . ')');
         $rows = $stmt ? $stmt->fetchAll(PDO::FETCH_ASSOC) : [];
         $lookup = [];
         foreach ($names as $name) {
             $lookup[strtolower($name)] = $name;
         }
         foreach ($rows as $row) {
-            $name = (string)($row['name'] ?? '');
+            $name = (string)($row['name'] ?? $row['Field'] ?? '');
             if ($name !== '' && isset($lookup[strtolower($name)])) {
                 return $name;
             }
@@ -188,6 +196,11 @@ final class MediaFilenameImporter
 
     private function quoteIdentifier(string $name): string
     {
-        return '"' . str_replace('"', '""', $name) . '"';
+        return '`' . str_replace('`', '``', $name) . '`';
+    }
+
+    private function isMysql(PDO $pdo): bool
+    {
+        return (string)$pdo->getAttribute(PDO::ATTR_DRIVER_NAME) === 'mysql';
     }
 }

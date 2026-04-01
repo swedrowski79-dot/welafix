@@ -9,8 +9,67 @@ final class ArtikelRelationWriter
 {
     public function __construct(private PDO $pdo) {}
 
+    private function isMysql(): bool
+    {
+        return (string)$this->pdo->getAttribute(PDO::ATTR_DRIVER_NAME) === 'mysql';
+    }
+
     public function ensureSchema(): void
     {
+        if ($this->isMysql()) {
+            $this->pdo->exec(
+                'CREATE TABLE IF NOT EXISTS artikel_attribute_map (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    afs_artikel_id VARCHAR(255) NOT NULL,
+                    attributes_parent_id INT NOT NULL,
+                    attributes_id INT NOT NULL,
+                    position INT NOT NULL DEFAULT 0,
+                    attribute_name VARCHAR(255) NULL,
+                    attribute_value VARCHAR(255) NULL,
+                    changed TINYINT NOT NULL DEFAULT 0,
+                    UNIQUE KEY uniq_artikel_attribute_map (afs_artikel_id, attributes_parent_id, attributes_id)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci'
+            );
+            $this->pdo->exec(
+                'CREATE INDEX IF NOT EXISTS idx_artikel_attribute_map_artikel
+                 ON artikel_attribute_map(afs_artikel_id)'
+            );
+
+            $this->pdo->exec(
+                'CREATE TABLE IF NOT EXISTS artikel_media_map (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    afs_artikel_id VARCHAR(255) NOT NULL,
+                    media_id INT NULL,
+                    filename VARCHAR(512) NOT NULL,
+                    position INT NOT NULL DEFAULT 0,
+                    is_main TINYINT NOT NULL DEFAULT 0,
+                    source_field VARCHAR(255) NULL,
+                    changed TINYINT NOT NULL DEFAULT 0,
+                    UNIQUE KEY uniq_artikel_media_map (afs_artikel_id, position, filename(191))
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci'
+            );
+            $this->pdo->exec(
+                'CREATE INDEX IF NOT EXISTS idx_artikel_media_map_artikel
+                 ON artikel_media_map(afs_artikel_id)'
+            );
+
+            $this->pdo->exec(
+                'CREATE TABLE IF NOT EXISTS artikel_warengruppe (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    afs_artikel_id VARCHAR(255) NOT NULL,
+                    afs_wg_id INT NOT NULL,
+                    position INT NOT NULL DEFAULT 0,
+                    source_field VARCHAR(255) NULL,
+                    changed TINYINT NOT NULL DEFAULT 0,
+                    UNIQUE KEY uniq_artikel_warengruppe (afs_artikel_id, afs_wg_id)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci'
+            );
+            $this->pdo->exec(
+                'CREATE INDEX IF NOT EXISTS idx_artikel_warengruppe_artikel
+                 ON artikel_warengruppe(afs_artikel_id)'
+            );
+            return;
+        }
         $this->pdo->exec(
             'CREATE TABLE IF NOT EXISTS artikel_attribute_map (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -94,8 +153,21 @@ final class ArtikelRelationWriter
             $changed++;
         }
 
-        $upsert = $this->pdo->prepare(
-            'INSERT INTO artikel_attribute_map
+        $upsert = $this->pdo->prepare($this->isMysql()
+            ? 'INSERT INTO artikel_attribute_map
+                (afs_artikel_id, attributes_parent_id, attributes_id, position, attribute_name, attribute_value, changed)
+               VALUES
+                (:afs_artikel_id, :attributes_parent_id, :attributes_id, :position, :attribute_name, :attribute_value, 1)
+               ON DUPLICATE KEY UPDATE
+                position = VALUES(position),
+                attribute_name = VALUES(attribute_name),
+                attribute_value = VALUES(attribute_value),
+                changed = CASE
+                    WHEN artikel_attribute_map.position != VALUES(position)
+                      OR COALESCE(artikel_attribute_map.attribute_name, \'\') != COALESCE(VALUES(attribute_name), \'\')
+                      OR COALESCE(artikel_attribute_map.attribute_value, \'\') != COALESCE(VALUES(attribute_value), \'\')
+                    THEN 1 ELSE artikel_attribute_map.changed END'
+            : 'INSERT INTO artikel_attribute_map
                 (afs_artikel_id, attributes_parent_id, attributes_id, position, attribute_name, attribute_value, changed)
              VALUES
                 (:afs_artikel_id, :attributes_parent_id, :attributes_id, :position, :attribute_name, :attribute_value, 1)
@@ -107,8 +179,7 @@ final class ArtikelRelationWriter
                     WHEN artikel_attribute_map.position != excluded.position
                       OR COALESCE(artikel_attribute_map.attribute_name, \'\') != COALESCE(excluded.attribute_name, \'\')
                       OR COALESCE(artikel_attribute_map.attribute_value, \'\') != COALESCE(excluded.attribute_value, \'\')
-                    THEN 1 ELSE artikel_attribute_map.changed END'
-        );
+                    THEN 1 ELSE artikel_attribute_map.changed END');
 
         foreach ($incoming as $key => $assignment) {
             $before = $existing[$key] ?? null;
@@ -153,7 +224,7 @@ final class ArtikelRelationWriter
             'DELETE FROM artikel_media_map
              WHERE afs_artikel_id = :afs_artikel_id
                AND position = :position
-               AND lower(filename) = lower(:filename)'
+               AND LOWER(filename) = LOWER(:filename)'
         );
         foreach ($existing as $key => $row) {
             if (isset($incoming[$key])) {
@@ -167,8 +238,21 @@ final class ArtikelRelationWriter
             $changed++;
         }
 
-        $upsert = $this->pdo->prepare(
-            'INSERT INTO artikel_media_map
+        $upsert = $this->pdo->prepare($this->isMysql()
+            ? 'INSERT INTO artikel_media_map
+                (afs_artikel_id, media_id, filename, position, is_main, source_field, changed)
+               VALUES
+                (:afs_artikel_id, :media_id, :filename, :position, :is_main, :source_field, 1)
+               ON DUPLICATE KEY UPDATE
+                media_id = VALUES(media_id),
+                is_main = VALUES(is_main),
+                source_field = VALUES(source_field),
+                changed = CASE
+                    WHEN COALESCE(artikel_media_map.media_id, 0) != COALESCE(VALUES(media_id), 0)
+                      OR artikel_media_map.is_main != VALUES(is_main)
+                      OR COALESCE(artikel_media_map.source_field, \'\') != COALESCE(VALUES(source_field), \'\')
+                    THEN 1 ELSE artikel_media_map.changed END'
+            : 'INSERT INTO artikel_media_map
                 (afs_artikel_id, media_id, filename, position, is_main, source_field, changed)
              VALUES
                 (:afs_artikel_id, :media_id, :filename, :position, :is_main, :source_field, 1)
@@ -180,8 +264,7 @@ final class ArtikelRelationWriter
                     WHEN COALESCE(artikel_media_map.media_id, 0) != COALESCE(excluded.media_id, 0)
                       OR artikel_media_map.is_main != excluded.is_main
                       OR COALESCE(artikel_media_map.source_field, \'\') != COALESCE(excluded.source_field, \'\')
-                    THEN 1 ELSE artikel_media_map.changed END'
-        );
+                    THEN 1 ELSE artikel_media_map.changed END');
 
         foreach ($incoming as $key => $item) {
             $before = $existing[$key] ?? null;
@@ -240,8 +323,19 @@ final class ArtikelRelationWriter
             $changed++;
         }
 
-        $upsert = $this->pdo->prepare(
-            'INSERT INTO artikel_warengruppe
+        $upsert = $this->pdo->prepare($this->isMysql()
+            ? 'INSERT INTO artikel_warengruppe
+                (afs_artikel_id, afs_wg_id, position, source_field, changed)
+               VALUES
+                (:afs_artikel_id, :afs_wg_id, :position, :source_field, 1)
+               ON DUPLICATE KEY UPDATE
+                position = VALUES(position),
+                source_field = VALUES(source_field),
+                changed = CASE
+                    WHEN artikel_warengruppe.position != VALUES(position)
+                      OR COALESCE(artikel_warengruppe.source_field, \'\') != COALESCE(VALUES(source_field), \'\')
+                    THEN 1 ELSE artikel_warengruppe.changed END'
+            : 'INSERT INTO artikel_warengruppe
                 (afs_artikel_id, afs_wg_id, position, source_field, changed)
              VALUES
                 (:afs_artikel_id, :afs_wg_id, :position, :source_field, 1)
@@ -251,8 +345,7 @@ final class ArtikelRelationWriter
                 changed = CASE
                     WHEN artikel_warengruppe.position != excluded.position
                       OR COALESCE(artikel_warengruppe.source_field, \'\') != COALESCE(excluded.source_field, \'\')
-                    THEN 1 ELSE artikel_warengruppe.changed END'
-        );
+                    THEN 1 ELSE artikel_warengruppe.changed END');
 
         foreach ($incoming as $key => $item) {
             $before = $existing[$key] ?? null;
@@ -280,8 +373,9 @@ final class ArtikelRelationWriter
     public function ensureMedia(string $filename, string $source, string $createdAt): ?int
     {
         $insert = $this->pdo->prepare(
-            'INSERT OR IGNORE INTO media (filename, source, created_at, changed)
-             VALUES (:filename, :source, :created_at, 1)'
+            $this->isMysql()
+                ? 'INSERT IGNORE INTO media (filename, source, created_at, changed) VALUES (:filename, :source, :created_at, 1)'
+                : 'INSERT OR IGNORE INTO media (filename, source, created_at, changed) VALUES (:filename, :source, :created_at, 1)'
         );
         $insert->execute([
             ':filename' => $filename,

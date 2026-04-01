@@ -10,6 +10,8 @@ use XtApi\Controller\ExportController;
 use XtApi\Controller\SchemaController;
 use XtApi\Controller\ExportTableController;
 use XtApi\Controller\ApplyController;
+use XtApi\Controller\FileUploadController;
+use XtApi\Controller\DebugController;
 
 $router = new Router();
 $auth = new ApiAuth();
@@ -18,6 +20,8 @@ $export = new ExportController();
 $schema = new SchemaController();
 $exportTable = new ExportTableController();
 $apply = new ApplyController();
+$fileUpload = new FileUploadController();
+$debug = new DebugController();
 
 $router->get('/health', function () use ($auth, $health) {
     $auth->requireAuth();
@@ -55,6 +59,16 @@ $router->getPattern('#^/export/table/([A-Za-z0-9_]+)$#', function (array $matche
 $router->post('/apply', function () use ($auth, $apply) {
     $auth->requireAuth();
     $apply->applyFromBody();
+});
+
+$router->post('/upload-files', function () use ($auth, $fileUpload) {
+    $auth->requireAuth();
+    $fileUpload->uploadFromBody();
+});
+
+$router->get('/debug/upload-env', function () use ($auth, $debug) {
+    $auth->requireAuth();
+    $debug->uploadEnv();
 });
 
 $router->dispatch();

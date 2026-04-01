@@ -13,7 +13,7 @@ declare(strict_types=1);
       </div>
       <div class="status-row">
         <span class="status-dot" id="sqlite-dot"></span>
-        <span class="status-text" id="sqlite-status">SQLite: prüfe…</span>
+        <span class="status-text" id="sqlite-status">Lokale DB: prüfe…</span>
       </div>
       <div class="status-row">
         <span class="status-dot" id="xtapi-dot"></span>
@@ -61,11 +61,12 @@ declare(strict_types=1);
     </div>
     <div class="tile">
       <div class="tile-label">Tools</div>
-      <a class="btn" href="/dashboard/sqlite">SQLite Browser</a>
+      <a class="btn" href="/dashboard/sqlite">Lokale DB Browser</a>
       <button class="btn" type="button" data-endpoint="/api/filedb/check">FileDB Check</button>
       <button class="btn" type="button" data-endpoint="/api/filedb/apply">FileDB to SQLite</button>
       <button class="btn" type="button" data-endpoint="/migrate.php">Migration</button>
       <button class="btn" type="button" data-endpoint="/sync/xt-full?mapping=xt_commerce_full_tables">XT Full Tables Sync</button>
+      <button class="btn" type="button" id="local-db-reset">Lokale DB reset</button>
       <button class="btn" type="button" id="xt-import-open">XT-Commerce Tabellen Import</button>
     </div>
   </div>
@@ -142,7 +143,7 @@ declare(strict_types=1);
     };
 
     checkStatus('/api/test-mssql', 'mssql-dot', 'mssql-status', 'MSSQL');
-    checkStatus('/api/test-sqlite', 'sqlite-dot', 'sqlite-status', 'SQLite');
+    checkStatus('/api/test-sqlite', 'sqlite-dot', 'sqlite-status', 'Lokale DB');
     const checkXtStatus = async () => {
       try {
         const response = await fetch('/api/xt/check', { headers: { 'Accept': 'application/json' } });
@@ -356,6 +357,35 @@ declare(strict_types=1);
         }
       } catch (e) {
         setOutput('Fehler: ' + e.message);
+      }
+    });
+
+    document.getElementById('local-db-reset').addEventListener('click', async (event) => {
+      const button = event.currentTarget;
+      const confirmed = window.confirm('Lokale Arbeitsdatenbank wirklich löschen und neu erstellen?');
+      if (!confirmed) return;
+
+      button.disabled = true;
+      const originalText = button.textContent;
+      button.textContent = 'Reset…';
+      setOutput('Lokale Arbeitsdatenbank wird zurückgesetzt ...');
+      try {
+        const response = await fetch('/api/local-db/reset', {
+          method: 'POST',
+          headers: { 'Accept': 'application/json' }
+        });
+        const text = await response.text();
+        try {
+          const json = JSON.parse(text);
+          setOutput(JSON.stringify(json, null, 2));
+        } catch (e) {
+          setOutput(text);
+        }
+      } catch (e) {
+        setOutput('Fehler: ' + e.message);
+      } finally {
+        button.disabled = false;
+        button.textContent = originalText;
       }
     });
 
