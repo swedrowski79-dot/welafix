@@ -1,5 +1,6 @@
 /storage/app.db
 /storage/mysql/
+/node_modules/
 /logs/*.log
 /vendor/
 .DS_Store
