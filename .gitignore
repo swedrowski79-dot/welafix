@@ -1,4 +1,5 @@
 /storage/app.db
+/storage/mysql/
 /logs/*.log
 /vendor/
 .DS_Store
